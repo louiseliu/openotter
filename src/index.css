@@ -1,0 +1,235 @@
+@import "tailwindcss";
+
+@theme {
+  --color-hermes-50: #f0f9ff;
+  --color-hermes-100: #e0f2fe;
+  --color-hermes-200: #bae6fd;
+  --color-hermes-300: #7dd3fc;
+  --color-hermes-400: #38bdf8;
+  --color-hermes-500: #0ea5e9;
+  --color-hermes-600: #0284c7;
+  --color-hermes-700: #0369a1;
+  --color-hermes-800: #075985;
+  --color-hermes-900: #0c4a6e;
+
+  --color-surface-0: var(--surface-0);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+}
+
+:root {
+  --surface-0: #09090b;
+  --surface-1: #18181b;
+  --surface-2: #27272a;
+  --surface-3: #3f3f46;
+  color-scheme: dark;
+}
+
+:root.light {
+  --surface-0: #ffffff;
+  --surface-1: #f8f9fa;
+  --surface-2: #f0f1f3;
+  --surface-3: #e2e4e8;
+  color-scheme: light;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 16px;
+}
+
+button,
+[role="button"],
+a[href],
+select,
+label[for],
+summary,
+input[type="checkbox"],
+input[type="radio"],
+input[type="submit"],
+input[type="button"],
+.cursor-pointer {
+  cursor: pointer;
+}
+
+button:disabled,
+button[disabled] {
+  cursor: not-allowed;
+}
+
+:root.light body {
+  color: #1a1a2e;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--surface-3);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #52525b;
+}
+:root.light ::-webkit-scrollbar-thumb {
+  background: #d0d3d9;
+}
+:root.light ::-webkit-scrollbar-thumb:hover {
+  background: #a8abb3;
+}
+
+pre code {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+select option {
+  background: var(--surface-1);
+  color: #e4e4e7;
+}
+:root.light select option {
+  background: #ffffff;
+  color: #1a1a2e;
+}
+
+/* ─── Light Mode: Text ─── */
+:root.light .text-zinc-100 { color: #1a1a2e; }
+:root.light .text-zinc-200 { color: #2d2d44; }
+:root.light .text-zinc-300 { color: #44445c; }
+:root.light .text-zinc-400 { color: #5c5c72; }
+:root.light .text-zinc-500 { color: #787890; }
+:root.light .text-zinc-600 { color: #9898aa; }
+:root.light .text-white { color: #ffffff; }
+
+/* ─── Light Mode: Borders ─── */
+:root.light .border-zinc-600 { border-color: #c8cad0; }
+:root.light .border-zinc-700 { border-color: #dcdee3; }
+:root.light .border-zinc-800 { border-color: #e8eaee; }
+
+/* ─── Light Mode: Backgrounds ─── */
+:root.light .bg-zinc-800 { background-color: #ecedf0; }
+:root.light .bg-zinc-900 { background-color: #f4f5f7; }
+:root.light .bg-zinc-900\/50 { background-color: rgba(244, 245, 247, 0.5); }
+
+/* ─── Light Mode: Hermes accent adjustments ─── */
+:root.light .bg-hermes-600\/20 { background-color: rgba(2, 132, 199, 0.08); }
+:root.light .bg-hermes-500\/10 { background-color: rgba(14, 165, 233, 0.08); }
+:root.light .bg-hermes-500\/20 { background-color: rgba(14, 165, 233, 0.12); }
+:root.light .text-hermes-300 { color: #0369a1; }
+:root.light .text-hermes-400 { color: #0284c7; }
+
+/* ─── Light Mode: Status color adjustments ─── */
+:root.light .text-emerald-300 { color: #047857; }
+:root.light .text-emerald-400 { color: #059669; }
+:root.light .bg-emerald-500\/10 { background-color: rgba(16, 185, 129, 0.08); }
+:root.light .bg-emerald-500\/20 { background-color: rgba(16, 185, 129, 0.12); }
+
+:root.light .text-amber-300 { color: #b45309; }
+:root.light .text-amber-400 { color: #d97706; }
+:root.light .bg-amber-500\/5 { background-color: rgba(245, 158, 11, 0.05); }
+:root.light .bg-amber-500\/10 { background-color: rgba(245, 158, 11, 0.08); }
+
+:root.light .text-red-300 { color: #b91c1c; }
+:root.light .text-red-400 { color: #dc2626; }
+:root.light .bg-red-500\/10 { background-color: rgba(239, 68, 68, 0.06); }
+
+:root.light .text-blue-300 { color: #1d4ed8; }
+:root.light .text-blue-400 { color: #2563eb; }
+:root.light .bg-blue-500\/5 { background-color: rgba(59, 130, 246, 0.05); }
+:root.light .bg-blue-500\/10 { background-color: rgba(59, 130, 246, 0.08); }
+
+:root.light .text-purple-400 { color: #7c3aed; }
+
+/* ─── Light Mode: Input / Select / Textarea ─── */
+:root.light input,
+:root.light select,
+:root.light textarea {
+  color: #1a1a2e;
+}
+:root.light input::placeholder,
+:root.light textarea::placeholder {
+  color: #9898aa;
+}
+
+/* ─── Light Mode: Dividers ─── */
+:root.light .divide-zinc-800 > :not(:first-child) {
+  border-color: #e8eaee;
+}
+
+/* ─── Light Mode: Dashed borders ─── */
+:root.light .border-dashed.border-zinc-700 {
+  border-color: #c8cad0;
+}
+
+/* ─── Light Mode: Shadows for depth ─── */
+:root.light .bg-surface-1 {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
+}
+
+/* ─── Light Mode: Code blocks ─── */
+:root.light code {
+  color: #0369a1;
+}
+:root.light pre {
+  background-color: #f4f5f7 !important;
+  border: 1px solid #e8eaee;
+}
+:root.light pre code {
+  color: #1a1a2e;
+}
+
+/* ─── Light Mode: Prose (markdown content) ─── */
+:root.light .prose-invert {
+  --tw-prose-body: #2d2d44;
+  --tw-prose-headings: #1a1a2e;
+  --tw-prose-lead: #44445c;
+  --tw-prose-links: #0284c7;
+  --tw-prose-bold: #1a1a2e;
+  --tw-prose-counters: #5c5c72;
+  --tw-prose-bullets: #787890;
+  --tw-prose-hr: #e8eaee;
+  --tw-prose-quotes: #44445c;
+  --tw-prose-quote-borders: #dcdee3;
+  --tw-prose-captions: #787890;
+  --tw-prose-code: #0369a1;
+  --tw-prose-pre-code: #1a1a2e;
+  --tw-prose-pre-bg: #f4f5f7;
+  --tw-prose-th-borders: #dcdee3;
+  --tw-prose-td-borders: #e8eaee;
+}
+
+/* ─── Light Mode: Logo shadow ─── */
+:root.light .shadow-hermes-500\/30 {
+  box-shadow: 0 8px 24px rgba(14, 165, 233, 0.1);
+}
+:root.light .shadow-2xl {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+}
+
+/* ─── Light Mode: Sidebar active state ─── */
+:root.light .bg-hermes-600 {
+  background-color: #0284c7;
+}
+:root.light .hover\:bg-hermes-500:hover {
+  background-color: #0ea5e9;
+}
+
+/* ─── Light Mode: Gradient for agent avatar ─── */
+:root.light .from-hermes-500\/30 { --tw-gradient-from: rgba(14, 165, 233, 0.12); }
+:root.light .to-hermes-700\/30 { --tw-gradient-to: rgba(3, 105, 161, 0.12); }
+
+/* ─── Light Mode: Progress bar gradient ─── */
+:root.light .from-hermes-600 { --tw-gradient-from: #0284c7; }
+:root.light .to-hermes-400 { --tw-gradient-to: #38bdf8; }
+
+/* ─── Light Mode: Animate pulse for status dots ─── */
+:root.light .bg-emerald-500 { background-color: #10b981; }
+:root.light .bg-zinc-600 { background-color: #c8cad0; }
