@@ -16,13 +16,16 @@ jobs:
       matrix:
         include:
           - platform: macos-latest
-            target: aarch64-apple-darwin
+            args: "--target aarch64-apple-darwin"
             label: macOS-ARM64
-          - platform: macos-13
-            target: x86_64-apple-darwin
+          - platform: macos-latest
+            args: "--target x86_64-apple-darwin"
             label: macOS-Intel
+          - platform: ubuntu-22.04
+            args: ""
+            label: Linux-x64
           - platform: windows-latest
-            target: x86_64-pc-windows-msvc
+            args: ""
             label: Windows-x64
 
     runs-on: ${{ matrix.platform }}
@@ -32,59 +35,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install Hermes Agent
-        shell: bash
-        run: |
-          pip install pyinstaller
-          git clone --depth 1 https://github.com/NousResearch/hermes-agent.git /tmp/hermes-agent
-          cd /tmp/hermes-agent
-          pip install -e "."
-
-      - name: Build Sidecar
-        shell: bash
-        run: |
-          python scripts/build-sidecar.py --onefile
-          ls -la src-tauri/binaries/
-
-      - name: Install Frontend Dependencies
-        run: npm ci
-
-      - name: Build Tauri App
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "OpenOtter ${{ github.ref_name }}"
-          releaseBody: "See the assets below to download and install OpenOtter."
-          releaseDraft: true
-          prerelease: false
-          args: --target ${{ matrix.target }}
-
-  build-linux:
-    runs-on: ubuntu-22.04
-    name: Build (Linux-x64)
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install System Dependencies
+      - name: Install system dependencies (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
@@ -93,16 +45,25 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: "npm"
 
-      - name: Setup Rust
+      - name: Setup Rust (stable)
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install Hermes Agent
+      - name: Install Hermes Agent & PyInstaller
+        shell: bash
         run: |
           pip install pyinstaller
           git clone --depth 1 https://github.com/NousResearch/hermes-agent.git /tmp/hermes-agent
@@ -110,11 +71,12 @@ jobs:
           pip install -e "."
 
       - name: Build Sidecar
+        shell: bash
         run: |
           python scripts/build-sidecar.py --onefile
           ls -la src-tauri/binaries/
 
-      - name: Install Frontend Dependencies
+      - name: Install frontend dependencies
         run: npm ci
 
       - name: Build Tauri App
@@ -124,6 +86,17 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "OpenOtter ${{ github.ref_name }}"
-          releaseBody: "See the assets below to download and install OpenOtter."
+          releaseBody: |
+            ## OpenOtter ${{ github.ref_name }}
+
+            Download the installer for your platform below.
+
+            | Platform | File |
+            |----------|------|
+            | macOS (Apple Silicon) | `.dmg` |
+            | macOS (Intel) | `.dmg` |
+            | Windows | `.msi` / `.exe` |
+            | Linux | `.deb` / `.AppImage` |
           releaseDraft: true
           prerelease: false
+          args: ${{ matrix.args }}
