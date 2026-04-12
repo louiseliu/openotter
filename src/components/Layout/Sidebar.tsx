@@ -12,7 +12,6 @@ import {
   Moon,
   Cpu,
   KeyRound,
-  Box,
 } from "lucide-react";
 import { useAppStore, type View } from "../../stores/appStore";
 
@@ -27,7 +26,6 @@ const navItems: { id: View; icon: typeof LayoutDashboard; label: string }[] = [
   { id: "credentials", icon: KeyRound, label: "凭证" },
   { id: "cron", icon: Clock, label: "定时" },
   { id: "mcp", icon: Plug, label: "MCP" },
-  { id: "claw3d", icon: Box, label: "3D" },
   { id: "settings", icon: Settings, label: "设置" },
 ];
 

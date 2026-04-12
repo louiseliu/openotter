@@ -108,6 +108,33 @@ export async function updateAgentSoul(id: string, soulMd: string): Promise<void>
   return invoke("update_agent_soul", { id, soulMd });
 }
 
+// ─── Profile Files ──────────────────────────────────────────
+
+export interface ProfileFileInfo {
+  name: string;
+  size: number;
+  editable: boolean;
+}
+
+export async function listProfileFiles(id: string): Promise<ProfileFileInfo[]> {
+  return invoke<ProfileFileInfo[]>("list_profile_files", { id });
+}
+
+export async function getProfileFile(
+  id: string,
+  filename: string
+): Promise<string> {
+  return invoke<string>("get_profile_file", { id, filename });
+}
+
+export async function saveProfileFile(
+  id: string,
+  filename: string,
+  content: string
+): Promise<void> {
+  return invoke("save_profile_file", { id, filename, content });
+}
+
 // ─── Platform Configuration ────────────────────────────────
 
 export async function configurePlatform(request: {
@@ -116,6 +143,13 @@ export async function configurePlatform(request: {
   config: Record<string, string>;
 }): Promise<void> {
   return invoke("configure_platform", { request });
+}
+
+export async function unconfigurePlatform(request: {
+  agent_id: string;
+  platform: string;
+}): Promise<void> {
+  return invoke("unconfigure_platform", { request });
 }
 
 export async function getPlatformTemplates(): Promise<PlatformTemplate[]> {
@@ -129,6 +163,7 @@ export interface ChannelBot {
   name: string;
   platform_id: string;
   config: Record<string, string>;
+  agent_id: string;
   created_at: number;
 }
 
@@ -139,20 +174,22 @@ export async function listChannelBots(): Promise<ChannelBot[]> {
 export async function addChannelBot(
   name: string,
   platformId: string,
-  config: Record<string, string>
+  config: Record<string, string>,
+  agentId?: string
 ): Promise<ChannelBot> {
   return invoke<ChannelBot>("add_channel_bot", {
-    request: { name, platform_id: platformId, config },
+    request: { name, platform_id: platformId, config, agent_id: agentId ?? null },
   });
 }
 
 export async function updateChannelBot(
   id: string,
   name?: string,
-  config?: Record<string, string>
+  config?: Record<string, string>,
+  agentId?: string
 ): Promise<ChannelBot> {
   return invoke<ChannelBot>("update_channel_bot", {
-    request: { id, name, config },
+    request: { id, name: name ?? null, config: config ?? null, agent_id: agentId ?? null },
   });
 }
 
@@ -400,6 +437,110 @@ export async function getSkillContent(name: string): Promise<string> {
   return invoke<string>("get_skill_content", { name });
 }
 
+// ─── Skill Installation ─────────────────────────────────────
+
+export interface SkillValidation {
+  valid: boolean;
+  name: string;
+  description: string;
+  has_skill_md: boolean;
+  has_frontmatter: boolean;
+  path: string;
+  errors: string[];
+  warnings: string[];
+  already_installed: boolean;
+}
+
+export async function validateLocalSkill(
+  path: string
+): Promise<SkillValidation> {
+  return invoke<SkillValidation>("validate_local_skill", { path });
+}
+
+export async function installLocalSkill(path: string): Promise<string> {
+  return invoke<string>("install_local_skill", { path });
+}
+
+// ─── Agent Evolution ────────────────────────────────────────
+
+export interface EvolutionEvent {
+  timestamp: number;
+  event_type: string;
+  title: string;
+  detail: string;
+}
+
+export interface SkillTimeline {
+  name: string;
+  installed_at: number;
+  modified_at: number;
+  size_bytes: number;
+}
+
+export interface MemoryFileInfo {
+  name: string;
+  modified_at: number;
+  size_bytes: number;
+  preview: string;
+}
+
+export interface AgentEvolution {
+  agent_id: string;
+  agent_name: string;
+  created_at: number;
+  total_sessions: number;
+  total_messages: number;
+  total_skills: number;
+  total_memories: number;
+  level: number;
+  xp: number;
+  xp_next: number;
+  level_title: string;
+  skills_timeline: SkillTimeline[];
+  memory_files: MemoryFileInfo[];
+  events: EvolutionEvent[];
+  daily_messages: [string, number][];
+}
+
+export async function getAgentEvolution(
+  id: string
+): Promise<AgentEvolution> {
+  return invoke<AgentEvolution>("get_agent_evolution", { id });
+}
+
+// ─── Evolution Watcher ──────────────────────────────────────
+
+export interface EvolutionLogEntry {
+  id: number;
+  timestamp: number;
+  event_type: string;
+  title: string;
+  detail: string;
+  path: string;
+}
+
+export interface WatcherEvent {
+  event_type: string;
+  title: string;
+  detail: string;
+  path: string;
+  timestamp: number;
+}
+
+export async function getEvolutionLog(
+  limit?: number
+): Promise<EvolutionLogEntry[]> {
+  return invoke<EvolutionLogEntry[]>("get_evolution_log", {
+    limit: limit ?? null,
+  });
+}
+
+export async function onEvolutionEvent(
+  cb: (event: WatcherEvent) => void
+): Promise<UnlistenFn> {
+  return listen<WatcherEvent>("evolution-event", (e) => cb(e.payload));
+}
+
 // ─── Memory / Sessions ──────────────────────────────────────
 
 export interface SessionStats {
@@ -592,83 +733,6 @@ export async function setCredentialPool(
   return invoke<boolean>("set_credential_pool", { provider, entries });
 }
 
-// ─── Claw3D ─────────────────────────────────────────────────
-
-export interface Claw3dStatus {
-  cloned: boolean;
-  installed: boolean;
-  dev_server_running: boolean;
-  adapter_running: boolean;
-  running: boolean;
-  port: number;
-  port_in_use: boolean;
-  ws_url: string;
-  error: string;
-}
-
-export interface Claw3dSetupProgress {
-  step: number;
-  total_steps: number;
-  title: string;
-  detail: string;
-}
-
-export async function claw3dGetStatus(): Promise<Claw3dStatus> {
-  return invoke<Claw3dStatus>("claw3d_get_status");
-}
-
-export async function claw3dSetup(): Promise<void> {
-  return invoke("claw3d_setup");
-}
-
-export async function claw3dStartAll(): Promise<void> {
-  return invoke("claw3d_start_all");
-}
-
-export async function claw3dStopAll(): Promise<void> {
-  return invoke("claw3d_stop_all");
-}
-
-export async function claw3dStartDev(): Promise<void> {
-  return invoke("claw3d_start_dev");
-}
-
-export async function claw3dStopDev(): Promise<void> {
-  return invoke("claw3d_stop_dev");
-}
-
-export async function claw3dStartAdapter(): Promise<void> {
-  return invoke("claw3d_start_adapter");
-}
-
-export async function claw3dStopAdapter(): Promise<void> {
-  return invoke("claw3d_stop_adapter");
-}
-
-export async function claw3dGetPort(): Promise<number> {
-  return invoke<number>("claw3d_get_port");
-}
-
-export async function claw3dSetPort(port: number): Promise<void> {
-  return invoke("claw3d_set_port", { port });
-}
-
-export async function claw3dGetWsUrl(): Promise<string> {
-  return invoke<string>("claw3d_get_ws_url");
-}
-
-export async function claw3dSetWsUrl(url: string): Promise<void> {
-  return invoke("claw3d_set_ws_url", { url });
-}
-
-export async function onClaw3dSetupProgress(
-  cb: (progress: Claw3dSetupProgress) => void
-): Promise<UnlistenFn> {
-  return listen<Claw3dSetupProgress>("claw3d-setup-progress", (e) =>
-    cb(e.payload)
-  );
-}
-
 // ─── Toolset ────────────────────────────────────────────────
 
 export interface ToolsetInfo {
@@ -761,6 +825,59 @@ export async function startHermesSidecar(): Promise<number> {
 
 export async function stopHermesSidecar(): Promise<void> {
   return invoke("stop_hermes_sidecar");
+}
+
+// ─── QR Code Pairing ────────────────────────────────────────
+
+export async function startQrSession(platform: string): Promise<void> {
+  return invoke("start_qr_session", { platform });
+}
+
+export async function stopQrSession(): Promise<void> {
+  return invoke("stop_qr_session");
+}
+
+export interface QrCredentialResult {
+  found: boolean;
+  credentials: Record<string, string>;
+  message: string;
+}
+
+export async function detectQrCredentials(
+  platform: string
+): Promise<QrCredentialResult> {
+  return invoke<QrCredentialResult>("detect_qr_credentials", { platform });
+}
+
+export async function checkQrPlatformSupport(
+  platform: string
+): Promise<boolean> {
+  return invoke<boolean>("check_qr_platform_support", { platform });
+}
+
+export async function onQrSessionOutput(
+  cb: (data: string) => void
+): Promise<UnlistenFn> {
+  return listen<string>("qr-session-output", (e) => cb(e.payload));
+}
+
+export interface QrSessionUpdate {
+  stage: string;
+  qr_url: string | null;
+  message: string;
+  credentials: Record<string, string> | null;
+}
+
+export async function onQrSessionUpdate(
+  cb: (update: QrSessionUpdate) => void
+): Promise<UnlistenFn> {
+  return listen<QrSessionUpdate>("qr-session-update", (e) => cb(e.payload));
+}
+
+export async function onQrSessionEnded(
+  cb: (platform: string) => void
+): Promise<UnlistenFn> {
+  return listen<string>("qr-session-ended", (e) => cb(e.payload));
 }
 
 // ─── Events ────────────────────────────────────────────────

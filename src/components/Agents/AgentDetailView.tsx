@@ -15,32 +15,58 @@ import {
   Clock,
   ChevronDown,
   ChevronRight,
+  Sparkles,
+  QrCode,
+  Check,
+  AlertTriangle,
+  Settings,
+  File,
 } from "lucide-react";
 import { useAppStore } from "../../stores/appStore";
 import { useAgentStore } from "../../stores/agentStore";
 import {
   getAgent,
-  getAgentSoul,
-  updateAgentSoul,
   getAgentLogs,
   getPlatformTemplates,
   configurePlatform,
+  unconfigurePlatform,
   getAgentMessages,
+  listProfileFiles,
+  getProfileFile,
+  saveProfileFile,
+  startQrSession,
+  stopQrSession,
+  detectQrCredentials,
+  checkQrPlatformSupport,
+  onQrSessionOutput,
+  onQrSessionEnded,
   type AgentMeta,
   type PlatformTemplate,
+  type ProfileFileInfo,
   type ImSession,
 } from "../../lib/hermes-bridge";
 
-type Tab = "overview" | "messages" | "soul" | "platforms" | "logs";
+import AgentEvolutionPanel from "./AgentEvolutionPanel";
+import PersonalityEditor from "./PersonalityEditor";
+
+type Tab = "overview" | "evolution" | "messages" | "soul" | "platforms" | "config" | "logs";
 
 const PLATFORM_ICONS: Record<string, string> = {
   feishu: "/icons/channels/feishu.png",
   dingtalk: "/icons/channels/dingding.png",
   wecom: "/icons/channels/wecom.png",
   weixin: "/icons/channels/weixin.png",
-  telegram: "✈️",
-  discord: "🎮",
-  slack: "💬",
+  telegram: "/icons/channels/telegram.png",
+  discord: "/icons/channels/discord.png",
+  slack: "/icons/channels/slack.png",
+  whatsapp: "/icons/channels/whatsapp.png",
+  signal: "/icons/channels/signal.png",
+  sms: "📲",
+  email: "/icons/channels/email.png",
+  mattermost: "/icons/channels/mattermost.png",
+  matrix: "/icons/channels/matrix.png",
+  homeassistant: "/icons/channels/homeassistant.png",
+  bluebubbles: "🍎",
 };
 
 const PLATFORM_LABELS: Record<string, string> = {
@@ -51,6 +77,14 @@ const PLATFORM_LABELS: Record<string, string> = {
   telegram: "Telegram",
   discord: "Discord",
   slack: "Slack",
+  whatsapp: "WhatsApp",
+  signal: "Signal",
+  sms: "SMS",
+  email: "邮件",
+  mattermost: "Mattermost",
+  matrix: "Matrix",
+  homeassistant: "Home Assistant",
+  bluebubbles: "iMessage",
 };
 
 function PlatformIcon({ platform, size = 20 }: { platform: string; size?: number }) {
@@ -105,8 +139,6 @@ export default function AgentDetailView() {
 
   const [agent, setAgent] = useState<AgentMeta | null>(null);
   const [tab, setTab] = useState<Tab>("overview");
-  const [soulMd, setSoulMd] = useState("");
-  const [soulSaving, setSoulSaving] = useState(false);
   const [logs, setLogs] = useState("");
   const [platformTemplates, setPlatformTemplates] = useState<PlatformTemplate[]>([]);
   const [addingPlatform, setAddingPlatform] = useState<string | null>(null);
@@ -120,7 +152,6 @@ export default function AgentDetailView() {
   useEffect(() => {
     if (!selectedAgentId) return;
     getAgent(selectedAgentId).then(setAgent).catch(console.error);
-    getAgentSoul(selectedAgentId).then(setSoulMd).catch(() => setSoulMd(""));
     getPlatformTemplates().then(setPlatformTemplates).catch(console.error);
   }, [selectedAgentId]);
 
@@ -164,22 +195,13 @@ export default function AgentDetailView() {
   const gw = gatewayStatuses[agent.id];
   const isRunning = !!gw?.running;
 
-  const handleSaveSoul = async () => {
-    setSoulSaving(true);
-    try {
-      await updateAgentSoul(agent.id, soulMd);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setSoulSaving(false);
-    }
-  };
-
   const tabs: { id: Tab; label: string; icon: typeof FileText }[] = [
     { id: "overview", label: "概览", icon: FileText },
+    { id: "evolution", label: "进化", icon: Sparkles },
     { id: "messages", label: "消息", icon: MessageSquare },
     { id: "soul", label: "人格", icon: FileText },
     { id: "platforms", label: "平台", icon: Plug },
+    { id: "config", label: "配置", icon: Settings },
     { id: "logs", label: "日志", icon: Terminal },
   ];
 
@@ -284,6 +306,10 @@ export default function AgentDetailView() {
           </div>
         )}
 
+        {tab === "evolution" && selectedAgentId && (
+          <AgentEvolutionPanel agentId={selectedAgentId} />
+        )}
+
         {tab === "messages" && (
           <MessagesTab
             sessions={sessions}
@@ -297,30 +323,8 @@ export default function AgentDetailView() {
           />
         )}
 
-        {tab === "soul" && (
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <label className="text-sm text-zinc-300">SOUL.md</label>
-              <button
-                onClick={handleSaveSoul}
-                disabled={soulSaving}
-                className="inline-flex items-center gap-1.5 text-xs text-hermes-400 hover:text-hermes-300"
-              >
-                {soulSaving ? (
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                ) : (
-                  <Save className="w-3 h-3" />
-                )}
-                保存
-              </button>
-            </div>
-            <textarea
-              value={soulMd}
-              onChange={(e) => setSoulMd(e.target.value)}
-              rows={20}
-              className="w-full bg-surface-2 border border-zinc-700 rounded-xl px-4 py-3 text-sm text-zinc-100 font-mono focus:outline-none focus:border-hermes-500/50 resize-y"
-            />
-          </div>
+        {tab === "soul" && selectedAgentId && (
+          <PersonalityEditor agentId={selectedAgentId} />
         )}
 
         {tab === "platforms" && (
@@ -339,10 +343,25 @@ export default function AgentDetailView() {
                       <span className="text-sm text-zinc-200">
                         {PLATFORM_LABELS[p] || p}
                       </span>
+                      <span className={`text-xs ${isRunning ? "text-emerald-400" : "text-zinc-500"}`}>
+                        {isRunning ? "已连接" : "未启动"}
+                      </span>
                     </div>
-                    <span className={`text-xs ${isRunning ? "text-emerald-400" : "text-zinc-500"}`}>
-                      {isRunning ? "已连接" : "未启动"}
-                    </span>
+                    <button
+                      className="text-xs text-red-400 hover:text-red-300 hover:bg-red-400/10 px-3 py-1.5 rounded-lg transition-colors"
+                      onClick={async () => {
+                        if (!confirm(`确定要解绑 ${PLATFORM_LABELS[p] || p} 吗？凭证将从此 Agent 的配置中移除。`)) return;
+                        try {
+                          await unconfigurePlatform({ agent_id: agent.id, platform: p });
+                          const updated = await getAgent(agent.id);
+                          setAgent(updated);
+                        } catch (err) {
+                          console.error("Failed to unconfigure platform:", err);
+                        }
+                      }}
+                    >
+                      解绑
+                    </button>
                   </div>
                 ))}
               </div>
@@ -351,6 +370,7 @@ export default function AgentDetailView() {
             {addingPlatform ? (
               <AddPlatformForm
                 template={platformTemplates.find((t) => t.id === addingPlatform)!}
+                agentId={agent.id}
                 values={platformValues}
                 saving={platformSaving}
                 onChange={(key, value) => setPlatformValues((prev) => ({ ...prev, [key]: value }))}
@@ -394,16 +414,25 @@ export default function AgentDetailView() {
                           t.fields.forEach((f) => (initial[f.key] = ""));
                           setPlatformValues(initial);
                         }}
-                        className="text-left p-3 rounded-xl border border-zinc-800 bg-surface-1 hover:border-zinc-600 transition-colors"
+                        className="flex items-center gap-3 text-left p-3 rounded-xl border border-zinc-800 bg-surface-1 hover:border-zinc-600 transition-colors"
                       >
-                        <div className="text-sm font-medium text-zinc-200">{t.name}</div>
-                        <div className="text-[10px] text-zinc-500 mt-0.5">{t.description}</div>
+                        <div className="w-8 h-8 rounded-lg bg-surface-2 flex items-center justify-center shrink-0">
+                          <PlatformIcon platform={t.id} size={20} />
+                        </div>
+                        <div>
+                          <div className="text-sm font-medium text-zinc-200">{t.name}</div>
+                          <div className="text-[10px] text-zinc-500 mt-0.5">{t.description}</div>
+                        </div>
                       </button>
                     ))}
                 </div>
               </div>
             )}
           </div>
+        )}
+
+        {tab === "config" && selectedAgentId && (
+          <ProfileConfigTab agentId={selectedAgentId} />
         )}
 
         {tab === "logs" && (
@@ -423,6 +452,154 @@ export default function AgentDetailView() {
             </pre>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function ProfileConfigTab({ agentId }: { agentId: string }) {
+  const [files, setFiles] = useState<ProfileFileInfo[]>([]);
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [fileContent, setFileContent] = useState("");
+  const [originalContent, setOriginalContent] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    listProfileFiles(agentId).then(setFiles).catch(console.error);
+  }, [agentId]);
+
+  const handleSelectFile = async (name: string) => {
+    try {
+      const content = await getProfileFile(agentId, name);
+      setSelectedFile(name);
+      setFileContent(content);
+      setOriginalContent(content);
+      setSaveMsg(null);
+    } catch (err) {
+      console.error("Failed to read file:", err);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!selectedFile) return;
+    setSaving(true);
+    setSaveMsg(null);
+    try {
+      await saveProfileFile(agentId, selectedFile, fileContent);
+      setOriginalContent(fileContent);
+      setSaveMsg({ ok: true, text: "保存成功！重启 Gateway 后生效" });
+    } catch (err) {
+      setSaveMsg({
+        ok: false,
+        text: `保存失败: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const isDirty = fileContent !== originalContent;
+  const isEditable = files.find((f) => f.name === selectedFile)?.editable ?? false;
+
+  const formatSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/5 border border-amber-500/10 text-[11px] text-amber-400/70">
+        <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+        <span>高级功能 — 修改配置文件可能影响 Agent 运行，请谨慎操作。修改后需重启 Gateway 生效。</span>
+      </div>
+      <div className="grid grid-cols-4 gap-4">
+        <div className="col-span-1 space-y-1">
+          <p className="text-xs text-zinc-500 mb-2 px-1">Profile 文件</p>
+          {files.filter((f) => f.editable).map((f) => (
+            <button
+              key={f.name}
+              onClick={() => handleSelectFile(f.name)}
+              className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm transition-colors ${
+                selectedFile === f.name
+                  ? "bg-hermes-500/10 text-hermes-400 border border-hermes-500/30"
+                  : "text-zinc-400 hover:bg-surface-1 hover:text-zinc-200 border border-transparent"
+              }`}
+            >
+              <File className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">{f.name}</span>
+              <span className="ml-auto text-[10px] text-zinc-600">{formatSize(f.size)}</span>
+            </button>
+          ))}
+          {files.some((f) => !f.editable) && (
+            <>
+              <div className="border-t border-zinc-800 my-2" />
+              <p className="text-[10px] text-zinc-600 mb-1 px-1">其他文件（只读）</p>
+              {files.filter((f) => !f.editable).map((f) => (
+                <div
+                  key={f.name}
+                  className="flex items-center gap-2 px-3 py-1.5 text-xs text-zinc-600"
+                >
+                  <File className="w-3 h-3 shrink-0 opacity-40" />
+                  <span className="truncate">{f.name}</span>
+                  <span className="ml-auto text-[10px]">{formatSize(f.size)}</span>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+
+        <div className="col-span-3">
+          {selectedFile ? (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-zinc-200">{selectedFile}</span>
+                  {isEditable ? (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-hermes-500/10 text-hermes-400">可编辑</span>
+                  ) : (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500">只读</span>
+                  )}
+                  {isDirty && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400">未保存</span>
+                  )}
+                </div>
+                {isEditable && (
+                  <button
+                    onClick={handleSave}
+                    disabled={saving || !isDirty}
+                    className="inline-flex items-center gap-1.5 bg-hermes-600 hover:bg-hermes-500 disabled:opacity-40 text-white px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                  >
+                    {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                    保存
+                  </button>
+                )}
+              </div>
+              <textarea
+                value={fileContent}
+                onChange={(e) => isEditable && setFileContent(e.target.value)}
+                readOnly={!isEditable}
+                spellCheck={false}
+                className="w-full h-[420px] bg-surface-1 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-200 font-mono leading-relaxed resize-none focus:outline-none focus:border-hermes-500/30 placeholder:text-zinc-600"
+              />
+              {saveMsg && (
+                <p className={`text-xs ${saveMsg.ok ? "text-emerald-400" : "text-red-400"}`}>
+                  {saveMsg.text}
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-20 text-zinc-500">
+              <Settings className="w-10 h-10 mb-3 opacity-20" />
+              <p className="text-sm">选择左侧文件查看或编辑</p>
+              <p className="text-xs text-zinc-600 mt-1">.env、SOUL.md、config.yaml 可编辑</p>
+              <div className="mt-4 px-4 py-2 rounded-lg bg-amber-500/5 border border-amber-500/10">
+                <p className="text-[11px] text-amber-400/70">⚠ 高级功能 — 正常情况请勿修改，错误配置可能导致 Agent 无法正常工作</p>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -614,8 +791,11 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+const QR_PLATFORMS: Set<string> = new Set(["whatsapp", "weixin"]);
+
 function AddPlatformForm({
   template,
+  agentId,
   values,
   saving,
   onChange,
@@ -623,19 +803,247 @@ function AddPlatformForm({
   onCancel,
 }: {
   template: PlatformTemplate;
+  agentId: string;
   values: Record<string, string>;
   saving: boolean;
   onChange: (key: string, value: string) => void;
   onSave: () => void;
   onCancel: () => void;
 }) {
+  const isQrPlatform = QR_PLATFORMS.has(template.id);
+  const [qrMode, setQrMode] = useState(isQrPlatform);
+  const [qrSupported, setQrSupported] = useState<boolean | null>(null);
+  const [sessionActive, setSessionActive] = useState(false);
+  const [sessionOutput, setSessionOutput] = useState<string[]>([]);
+  const [paired, setPaired] = useState(false);
+  const [pairMsg, setPairMsg] = useState("");
+  const outputRef = useRef<HTMLPreElement>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (isQrPlatform) {
+      checkQrPlatformSupport(template.id)
+        .then(setQrSupported)
+        .catch(() => setQrSupported(false));
+    }
+  }, [isQrPlatform, template.id]);
+
+  useEffect(() => {
+    if (!sessionActive) return;
+
+    let unOutput: (() => void) | null = null;
+    let unEnded: (() => void) | null = null;
+
+    onQrSessionOutput((data) => {
+      setSessionOutput((prev) => [...prev, data]);
+    }).then((fn) => {
+      unOutput = fn;
+    });
+
+    onQrSessionEnded(() => {
+      setSessionActive(false);
+    }).then((fn) => {
+      unEnded = fn;
+    });
+
+    pollRef.current = setInterval(async () => {
+      try {
+        const result = await detectQrCredentials(template.id);
+        if (result.found) {
+          setPaired(true);
+          setPairMsg(result.message);
+          for (const [key, val] of Object.entries(result.credentials)) {
+            onChange(key, val);
+          }
+          if (pollRef.current) clearInterval(pollRef.current);
+          await stopQrSession();
+          setSessionActive(false);
+          try {
+            await configurePlatform({
+              agent_id: agentId,
+              platform: template.id,
+              config: result.credentials,
+            });
+            setPairMsg(result.message + " 已自动保存配置。");
+          } catch {
+            setPairMsg(result.message + " 自动保存失败，请手动保存。");
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }, 3000);
+
+    return () => {
+      unOutput?.();
+      unEnded?.();
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [sessionActive, template.id, agentId]);
+
+  useEffect(() => {
+    if (outputRef.current) {
+      outputRef.current.scrollTop = outputRef.current.scrollHeight;
+    }
+  }, [sessionOutput]);
+
+  const handleStartSession = async () => {
+    setSessionOutput([]);
+    setPaired(false);
+    setPairMsg("");
+    try {
+      await startQrSession(template.id);
+      setSessionActive(true);
+    } catch (err) {
+      setSessionOutput([`启动失败: ${err}`]);
+    }
+  };
+
+  const handleStopSession = async () => {
+    await stopQrSession();
+    setSessionActive(false);
+    if (pollRef.current) clearInterval(pollRef.current);
+  };
+
+  const handleCancel = () => {
+    if (sessionActive) {
+      stopQrSession().catch(() => {});
+    }
+    if (pollRef.current) clearInterval(pollRef.current);
+    onCancel();
+  };
+
   if (!template) return null;
+
+  if (isQrPlatform && qrMode) {
+    const isWeixin = template.id === "weixin";
+    const weixinUnsupported = isWeixin && qrSupported === false;
+
+    return (
+      <div className="bg-surface-1 border border-hermes-500/30 rounded-xl p-5">
+        <div className="flex items-center justify-between mb-1">
+          <h3 className="text-sm font-medium text-zinc-200">
+            接入 {template.name}
+          </h3>
+          <button
+            onClick={() => {
+              if (sessionActive) handleStopSession();
+              setQrMode(false);
+              setSessionOutput([]);
+              setPaired(false);
+            }}
+            className="text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors"
+          >
+            切换到手动填写 →
+          </button>
+        </div>
+        <p className="text-xs text-zinc-500 mb-4">{template.description}</p>
+
+        {weixinUnsupported && (
+          <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-3 mb-4">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-300">
+                微信适配器可能需要更新 Hermes 到最新版。
+              </p>
+            </div>
+          </div>
+        )}
+
+        {!sessionActive && !paired && (
+          <div className="text-center py-6">
+            <div className="w-14 h-14 rounded-2xl bg-surface-2 flex items-center justify-center mx-auto mb-3">
+              <QrCode className="w-7 h-7 text-hermes-400" />
+            </div>
+            <p className="text-xs text-zinc-500 mb-4">
+              {template.id === "whatsapp"
+                ? "点击按钮获取 QR 码，用 WhatsApp 扫描即可"
+                : "点击按钮获取 QR 码，用微信扫描即可"}
+            </p>
+            <button
+              onClick={handleStartSession}
+              className="inline-flex items-center gap-2 bg-hermes-600 hover:bg-hermes-500 text-white px-5 py-2 rounded-lg text-sm font-medium transition-colors"
+            >
+              <QrCode className="w-4 h-4" />
+              获取二维码
+            </button>
+          </div>
+        )}
+
+        {sessionActive && !paired && (
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="text-xs text-zinc-400">等待扫码...</span>
+              </div>
+              <button
+                onClick={handleStopSession}
+                className="text-[11px] text-zinc-500 hover:text-red-400 transition-colors"
+              >
+                取消
+              </button>
+            </div>
+            <pre
+              ref={outputRef}
+              className="bg-black rounded-xl p-4 text-[11px] text-green-400 overflow-auto max-h-[280px] whitespace-pre select-all"
+              style={{
+                fontFamily:
+                  "'SF Mono', 'Monaco', 'Cascadia Code', 'Menlo', monospace",
+                lineHeight: "1.1",
+                letterSpacing: "0px",
+              }}
+            >
+              {sessionOutput.length === 0
+                ? "正在启动，请稍候..."
+                : sessionOutput.join("")}
+            </pre>
+            <p className="text-[10px] text-zinc-600 mt-2 text-center">
+              {template.id === "whatsapp"
+                ? "打开 WhatsApp → 设置 → 已关联的设备 → 关联设备 → 扫描上方 QR 码"
+                : "打开微信 → 扫一扫 → 扫描上方二维码 → 手机确认登录"}
+            </p>
+          </div>
+        )}
+
+        {paired && (
+          <div className="text-center py-4">
+            <div className="w-14 h-14 rounded-full bg-emerald-500/10 flex items-center justify-center mx-auto mb-3">
+              <Check className="w-7 h-7 text-emerald-400" />
+            </div>
+            <p className="text-sm text-emerald-300 font-medium mb-1">
+              {pairMsg || "配对成功！"}
+            </p>
+          </div>
+        )}
+
+        <div className="flex gap-2 mt-4">
+          <button
+            onClick={handleCancel}
+            className="px-3 py-1.5 rounded-lg border border-zinc-700 text-zinc-400 hover:text-zinc-200 text-sm transition-colors"
+          >
+            {paired ? "完成" : "取消"}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-surface-1 border border-hermes-500/30 rounded-xl p-5">
-      <h3 className="text-sm font-medium text-zinc-200 mb-1">
-        接入 {template.name}
-      </h3>
+      <div className="flex items-center justify-between mb-1">
+        <h3 className="text-sm font-medium text-zinc-200">
+          接入 {template.name}
+        </h3>
+        {isQrPlatform && (
+          <button
+            onClick={() => setQrMode(true)}
+            className="text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors"
+          >
+            ← 切换到扫码连接
+          </button>
+        )}
+      </div>
       <p className="text-xs text-zinc-500 mb-4">{template.description}</p>
 
       <div className="text-xs text-zinc-500 bg-surface-2 rounded-lg p-3 mb-4 whitespace-pre-line">
@@ -657,7 +1065,9 @@ function AddPlatformForm({
           <div key={field.key}>
             <label className="block text-xs text-zinc-400 mb-1">
               {field.label}
-              {field.required && <span className="text-hermes-400 ml-0.5">*</span>}
+              {field.required && (
+                <span className="text-hermes-400 ml-0.5">*</span>
+              )}
             </label>
             <input
               type={field.secret ? "password" : "text"}

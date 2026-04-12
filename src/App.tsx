@@ -27,7 +27,6 @@ import CronView from "./components/Cron/CronView";
 import McpView from "./components/MCP/McpView";
 import ModelsView from "./components/Models/ModelsView";
 import CredentialsView from "./components/Credentials/CredentialsView";
-import Claw3DView from "./components/Claw3D/Claw3DView";
 import { Loader2 } from "lucide-react";
 
 export default function App() {
@@ -40,7 +39,7 @@ export default function App() {
     setSidecarError,
     setSidecarStarting,
   } = useAppStore();
-  const { refresh: refreshAgents } = useAgentStore();
+  const refreshAgents = useAgentStore((s) => s.refresh);
 
   useEffect(() => {
     async function init() {
@@ -182,7 +181,6 @@ export default function App() {
         {currentView === "mcp" && <McpView />}
         {currentView === "models" && <ModelsView />}
         {currentView === "credentials" && <CredentialsView />}
-        {currentView === "claw3d" && <Claw3DView />}
       </main>
     </div>
   );

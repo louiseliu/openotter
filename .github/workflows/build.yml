@@ -9,6 +9,10 @@ on:
 permissions:
   contents: write
 
+env:
+  NODE_VERSION: "22"
+  PYTHON_VERSION: "3.11"
+
 jobs:
   build:
     strategy:
@@ -18,15 +22,19 @@ jobs:
           - platform: macos-latest
             args: "--target aarch64-apple-darwin"
             label: macOS-ARM64
+            rust_targets: "aarch64-apple-darwin,x86_64-apple-darwin"
           - platform: macos-latest
             args: "--target x86_64-apple-darwin"
             label: macOS-Intel
+            rust_targets: "aarch64-apple-darwin,x86_64-apple-darwin"
           - platform: ubuntu-22.04
             args: ""
             label: Linux-x64
+            rust_targets: ""
           - platform: windows-latest
             args: ""
             label: Windows-x64
+            rust_targets: ""
 
     runs-on: ${{ matrix.platform }}
     name: Build (${{ matrix.label }})
@@ -35,67 +43,102 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # ── System Dependencies ────────────────────────────────
       - name: Install system dependencies (Linux)
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
 
+      # ── Node.js ────────────────────────────────────────────
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
 
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # ── Rust ───────────────────────────────────────────────
       - name: Setup Rust (stable)
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.rust_targets }}
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: "./src-tauri -> target"
 
+      # ── Python + Hermes Sidecar ────────────────────────────
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install Hermes Agent & PyInstaller
+      - name: Clone hermes-agent
         shell: bash
         run: |
-          pip install pyinstaller
-          git clone --depth 1 https://github.com/NousResearch/hermes-agent.git /tmp/hermes-agent
-          cd /tmp/hermes-agent
-          pip install -e "."
+          HERMES_DIR="$HOME/.hermes/hermes-agent"
+          mkdir -p "$HOME/.hermes"
+          git clone --depth 1 https://github.com/NousResearch/hermes-agent.git "$HERMES_DIR"
 
-      - name: Build Sidecar
+      - name: Setup hermes-agent venv & install
+        shell: bash
+        run: |
+          HERMES_DIR="$HOME/.hermes/hermes-agent"
+          python -m venv "$HERMES_DIR/venv"
+
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            VENV_PIP="$HERMES_DIR/venv/Scripts/pip"
+          else
+            VENV_PIP="$HERMES_DIR/venv/bin/pip"
+          fi
+
+          "$VENV_PIP" install --upgrade pip
+          "$VENV_PIP" install -e "$HERMES_DIR"
+          "$VENV_PIP" install pyinstaller
+
+      - name: Build sidecar binary
         shell: bash
         run: |
           python scripts/build-sidecar.py --onefile
+          echo "=== Sidecar binaries ==="
           ls -la src-tauri/binaries/
 
-      - name: Install frontend dependencies
-        run: npm ci
-
+      # ── Build Tauri App ────────────────────────────────────
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS code signing (optional, set secrets in repo settings)
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "OpenOtter ${{ github.ref_name }}"
+          tagName: ${{ github.ref_name || 'v__VERSION__' }}
+          releaseName: "OpenOtter ${{ github.ref_name || 'v__VERSION__' }}"
           releaseBody: |
-            ## OpenOtter ${{ github.ref_name }}
+            ## OpenOtter ${{ github.ref_name || 'v__VERSION__' }}
 
             Download the installer for your platform below.
+
+            ### Prerequisites
+            - [Hermes Agent](https://github.com/NousResearch/hermes-agent) must be installed (`curl -fsSL https://hermes-agent.nousresearch.com/install | bash`)
 
             | Platform | File |
             |----------|------|
             | macOS (Apple Silicon) | `.dmg` |
             | macOS (Intel) | `.dmg` |
-            | Windows | `.msi` / `.exe` |
+            | Windows | `.msi` / `.nsis` |
             | Linux | `.deb` / `.AppImage` |
           releaseDraft: true
           prerelease: false

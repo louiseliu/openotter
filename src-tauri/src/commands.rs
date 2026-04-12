@@ -155,6 +155,92 @@ pub fn update_agent_soul(id: String, soul_md: String) -> Result<(), String> {
     agent_manager::update_agent_soul(&id, &soul_md)
 }
 
+// ─── Profile Files ─────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfileFileInfo {
+    pub name: String,
+    pub size: u64,
+    pub editable: bool,
+}
+
+#[tauri::command]
+pub fn list_profile_files(id: String) -> Result<Vec<ProfileFileInfo>, String> {
+    let home = agent_manager::agent_home(&id);
+    if !home.exists() {
+        return Err("Profile not found".to_string());
+    }
+
+    let editable_files = [".env", "SOUL.md", "config.yaml"];
+    let mut files = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(&home) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+            if name.starts_with('.') && name != ".env" {
+                continue;
+            }
+            let meta = std::fs::metadata(&path).ok();
+            let size = meta.map(|m| m.len()).unwrap_or(0);
+            let editable = editable_files.contains(&name.as_str());
+            files.push(ProfileFileInfo {
+                name,
+                size,
+                editable,
+            });
+        }
+    }
+
+    files.sort_by(|a, b| {
+        let order = |n: &str| -> u8 {
+            match n {
+                ".env" => 0,
+                "config.yaml" => 1,
+                "SOUL.md" => 2,
+                _ => 10,
+            }
+        };
+        order(&a.name).cmp(&order(&b.name))
+    });
+
+    Ok(files)
+}
+
+#[tauri::command]
+pub fn get_profile_file(id: String, filename: String) -> Result<String, String> {
+    let home = agent_manager::agent_home(&id);
+    let path = home.join(&filename);
+    if !path.exists() {
+        return Err(format!("File not found: {}", filename));
+    }
+    if !path.starts_with(&home) {
+        return Err("Access denied".to_string());
+    }
+    std::fs::read_to_string(&path).map_err(|e| format!("Failed to read {}: {}", filename, e))
+}
+
+#[tauri::command]
+pub fn save_profile_file(id: String, filename: String, content: String) -> Result<(), String> {
+    let allowed = [".env", "SOUL.md", "config.yaml"];
+    if !allowed.contains(&filename.as_str()) {
+        return Err(format!("Cannot edit file: {}", filename));
+    }
+    let home = agent_manager::agent_home(&id);
+    let path = home.join(&filename);
+    if !path.starts_with(&home) {
+        return Err("Access denied".to_string());
+    }
+    std::fs::write(&path, &content).map_err(|e| format!("Failed to write {}: {}", filename, e))
+}
+
 // ─── Platform Configuration ────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -167,6 +253,17 @@ pub struct ConfigurePlatformRequest {
 #[tauri::command]
 pub fn configure_platform(request: ConfigurePlatformRequest) -> Result<(), String> {
     agent_manager::configure_platform(&request.agent_id, &request.platform, &request.config)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UnconfigurePlatformRequest {
+    pub agent_id: String,
+    pub platform: String,
+}
+
+#[tauri::command]
+pub fn unconfigure_platform(request: UnconfigurePlatformRequest) -> Result<(), String> {
+    agent_manager::unconfigure_platform(&request.agent_id, &request.platform)
 }
 
 #[tauri::command]
@@ -249,6 +346,126 @@ pub fn get_platform_templates() -> Vec<PlatformTemplate> {
             setup_url: "https://api.slack.com/apps".to_string(),
             setup_guide: "1. 创建 Slack App\n2. 启用 Socket Mode\n3. 添加 Bot Token Scopes\n4. 安装到 Workspace".to_string(),
         },
+        PlatformTemplate {
+            id: "whatsapp".to_string(),
+            name: "WhatsApp".to_string(),
+            icon: "whatsapp".to_string(),
+            description: "通过内置 Baileys 桥接接入 WhatsApp，需扫码配对".to_string(),
+            fields: vec![
+                PlatformField { key: "WHATSAPP_ENABLED".into(), label: "启用".into(), placeholder: "true".into(), required: true, secret: false, help: "设为 true 启用 WhatsApp 桥接".into() },
+                PlatformField { key: "WHATSAPP_MODE".into(), label: "模式".into(), placeholder: "bot".into(), required: true, secret: false, help: "bot（独立号码）或 self-chat（自聊模式）".into() },
+                PlatformField { key: "WHATSAPP_ALLOWED_USERS".into(), label: "允许的用户".into(), placeholder: "8613800138000".into(), required: false, secret: false, help: "逗号分隔的电话号码（含国家码，不含+）".into() },
+            ],
+            setup_url: "".to_string(),
+            setup_guide: "1. 确保已安装 Node.js v18+\n2. 运行 hermes whatsapp 启动配对向导\n3. 用 WhatsApp 扫描终端中的二维码\n4. 配对成功后启动 gateway".to_string(),
+        },
+        PlatformTemplate {
+            id: "signal".to_string(),
+            name: "Signal".to_string(),
+            icon: "signal".to_string(),
+            description: "通过 signal-cli 守护进程接入 Signal".to_string(),
+            fields: vec![
+                PlatformField { key: "SIGNAL_HTTP_URL".into(), label: "signal-cli HTTP 地址".into(), placeholder: "http://127.0.0.1:8080".into(), required: true, secret: false, help: "signal-cli 守护进程的 HTTP 端点".into() },
+                PlatformField { key: "SIGNAL_ACCOUNT".into(), label: "Bot 手机号".into(), placeholder: "+8613800138000".into(), required: true, secret: false, help: "E.164 格式的手机号码".into() },
+                PlatformField { key: "SIGNAL_ALLOWED_USERS".into(), label: "允许的用户".into(), placeholder: "+8613900139000".into(), required: false, secret: false, help: "逗号分隔的 E.164 手机号或 UUID".into() },
+            ],
+            setup_url: "https://github.com/AsamK/signal-cli".to_string(),
+            setup_guide: "1. 安装 signal-cli 并注册手机号\n2. 启动 signal-cli daemon --http\n3. 填写 HTTP 地址和账号\n4. 启动 gateway".to_string(),
+        },
+        PlatformTemplate {
+            id: "sms".to_string(),
+            name: "SMS (Twilio)".to_string(),
+            icon: "sms".to_string(),
+            description: "通过 Twilio 接入短信".to_string(),
+            fields: vec![
+                PlatformField { key: "TWILIO_ACCOUNT_SID".into(), label: "Account SID".into(), placeholder: "AC...".into(), required: true, secret: false, help: "Twilio 控制台获取".into() },
+                PlatformField { key: "TWILIO_AUTH_TOKEN".into(), label: "Auth Token".into(), placeholder: "".into(), required: true, secret: true, help: "Twilio 认证令牌".into() },
+                PlatformField { key: "TWILIO_PHONE_NUMBER".into(), label: "Twilio 号码".into(), placeholder: "+15551234567".into(), required: true, secret: false, help: "Twilio 分配的电话号码".into() },
+                PlatformField { key: "SMS_ALLOWED_USERS".into(), label: "允许的用户".into(), placeholder: "+8613800138000".into(), required: false, secret: false, help: "逗号分隔的 E.164 手机号".into() },
+            ],
+            setup_url: "https://www.twilio.com/console".to_string(),
+            setup_guide: "1. 注册 Twilio 账号\n2. 获取 Account SID 和 Auth Token\n3. 购买一个电话号码\n4. 配置 Webhook 到 gateway".to_string(),
+        },
+        PlatformTemplate {
+            id: "email".to_string(),
+            name: "Email 邮件".to_string(),
+            icon: "email".to_string(),
+            description: "通过 IMAP/SMTP 接入邮件".to_string(),
+            fields: vec![
+                PlatformField { key: "EMAIL_ADDRESS".into(), label: "邮箱地址".into(), placeholder: "bot@example.com".into(), required: true, secret: false, help: "用于收发邮件的地址".into() },
+                PlatformField { key: "EMAIL_PASSWORD".into(), label: "密码/应用密码".into(), placeholder: "".into(), required: true, secret: true, help: "邮箱密码或应用专用密码".into() },
+                PlatformField { key: "EMAIL_IMAP_HOST".into(), label: "IMAP 服务器".into(), placeholder: "imap.gmail.com".into(), required: true, secret: false, help: "IMAP 主机地址".into() },
+                PlatformField { key: "EMAIL_SMTP_HOST".into(), label: "SMTP 服务器".into(), placeholder: "smtp.gmail.com".into(), required: true, secret: false, help: "SMTP 主机地址".into() },
+                PlatformField { key: "EMAIL_ALLOWED_USERS".into(), label: "允许的发件人".into(), placeholder: "user@example.com".into(), required: false, secret: false, help: "逗号分隔的允许邮箱地址".into() },
+            ],
+            setup_url: "".to_string(),
+            setup_guide: "1. 准备一个邮箱账号\n2. 启用 IMAP 访问\n3. 如使用 Gmail 需生成应用专用密码\n4. 填写 IMAP/SMTP 服务器信息".to_string(),
+        },
+        PlatformTemplate {
+            id: "mattermost".to_string(),
+            name: "Mattermost".to_string(),
+            icon: "mattermost".to_string(),
+            description: "接入 Mattermost 自托管团队协作平台".to_string(),
+            fields: vec![
+                PlatformField { key: "MATTERMOST_URL".into(), label: "服务器地址".into(), placeholder: "https://mm.example.com".into(), required: true, secret: false, help: "Mattermost 服务器完整 URL".into() },
+                PlatformField { key: "MATTERMOST_TOKEN".into(), label: "Bot Token".into(), placeholder: "".into(), required: true, secret: true, help: "Bot 账号或个人访问令牌".into() },
+                PlatformField { key: "MATTERMOST_ALLOWED_USERS".into(), label: "允许的用户".into(), placeholder: "user-id-1,user-id-2".into(), required: false, secret: false, help: "逗号分隔的 Mattermost 用户 ID".into() },
+            ],
+            setup_url: "".to_string(),
+            setup_guide: "1. 在 Mattermost 管理后台创建 Bot 账号\n2. 获取 Bot Token\n3. 将 Bot 添加到目标频道".to_string(),
+        },
+        PlatformTemplate {
+            id: "matrix".to_string(),
+            name: "Matrix".to_string(),
+            icon: "matrix".to_string(),
+            description: "接入 Matrix 去中心化通信协议".to_string(),
+            fields: vec![
+                PlatformField { key: "MATRIX_HOMESERVER".into(), label: "Homeserver URL".into(), placeholder: "https://matrix.org".into(), required: true, secret: false, help: "Matrix homeserver 地址".into() },
+                PlatformField { key: "MATRIX_ACCESS_TOKEN".into(), label: "Access Token".into(), placeholder: "".into(), required: true, secret: true, help: "Matrix 访问令牌（或使用密码登录）".into() },
+                PlatformField { key: "MATRIX_USER_ID".into(), label: "User ID".into(), placeholder: "@hermes:matrix.org".into(), required: false, secret: false, help: "Matrix 用户 ID（密码登录时必填）".into() },
+                PlatformField { key: "MATRIX_ALLOWED_USERS".into(), label: "允许的用户".into(), placeholder: "@alice:matrix.org".into(), required: false, secret: false, help: "逗号分隔的 Matrix 用户 ID".into() },
+            ],
+            setup_url: "https://app.element.io".to_string(),
+            setup_guide: "1. 在 Matrix homeserver 上注册 Bot 账号\n2. 获取 Access Token\n3. 邀请 Bot 到目标房间".to_string(),
+        },
+        PlatformTemplate {
+            id: "homeassistant".to_string(),
+            name: "Home Assistant".to_string(),
+            icon: "homeassistant".to_string(),
+            description: "接入 Home Assistant 智能家居平台".to_string(),
+            fields: vec![
+                PlatformField { key: "HASS_TOKEN".into(), label: "长期访问令牌".into(), placeholder: "".into(), required: true, secret: true, help: "在 HA 个人资料页面生成长期访问令牌".into() },
+                PlatformField { key: "HASS_URL".into(), label: "HA 地址".into(), placeholder: "http://homeassistant.local:8123".into(), required: false, secret: false, help: "Home Assistant 的访问地址".into() },
+            ],
+            setup_url: "".to_string(),
+            setup_guide: "1. 打开 Home Assistant\n2. 个人资料 → 安全 → 长期访问令牌\n3. 创建新令牌并复制".to_string(),
+        },
+        PlatformTemplate {
+            id: "weixin".to_string(),
+            name: "微信 / Weixin".to_string(),
+            icon: "weixin".to_string(),
+            description: "通过 iLink Bot API 接入微信".to_string(),
+            fields: vec![
+                PlatformField { key: "WEIXIN_ACCOUNT_ID".into(), label: "Account ID".into(), placeholder: "".into(), required: true, secret: false, help: "通过 iLink Bot API 扫码登录获取".into() },
+                PlatformField { key: "WEIXIN_TOKEN".into(), label: "Token".into(), placeholder: "".into(), required: true, secret: true, help: "通过 iLink Bot API 扫码登录获取".into() },
+                PlatformField { key: "WEIXIN_ALLOWED_USERS".into(), label: "允许的用户".into(), placeholder: "wxid_xxx".into(), required: false, secret: false, help: "逗号分隔的微信用户 ID".into() },
+            ],
+            setup_url: "https://ilinkai.weixin.qq.com".to_string(),
+            setup_guide: "1. 访问 iLink Bot API\n2. 使用微信扫码登录获取凭证\n3. 复制 Account ID 和 Token".to_string(),
+        },
+        PlatformTemplate {
+            id: "bluebubbles".to_string(),
+            name: "BlueBubbles (iMessage)".to_string(),
+            icon: "bluebubbles".to_string(),
+            description: "通过 BlueBubbles 服务器接入 iMessage".to_string(),
+            fields: vec![
+                PlatformField { key: "BLUEBUBBLES_SERVER_URL".into(), label: "服务器地址".into(), placeholder: "http://192.168.1.10:1234".into(), required: true, secret: false, help: "BlueBubbles 服务器的 URL".into() },
+                PlatformField { key: "BLUEBUBBLES_PASSWORD".into(), label: "服务器密码".into(), placeholder: "".into(), required: true, secret: true, help: "BlueBubbles 服务器密码".into() },
+                PlatformField { key: "BLUEBUBBLES_ALLOWED_USERS".into(), label: "允许的用户".into(), placeholder: "+8613800138000".into(), required: false, secret: false, help: "逗号分隔的授权用户".into() },
+            ],
+            setup_url: "https://bluebubbles.app".to_string(),
+            setup_guide: "1. 在 Mac 上安装 BlueBubbles 服务器\n2. 配置并启动服务器\n3. 获取服务器地址和密码".to_string(),
+        },
     ]
 }
 
@@ -273,9 +490,9 @@ pub struct PlatformField {
     pub help: String,
 }
 
-// ─── Channel Configuration (Global) ────────────────────────
-
 // ─── Channel Bots ──────────────────────────────────────────
+// Channel bots store UI-level metadata in ~/.openotter/channels.json
+// and sync credentials to the target Hermes profile's .env file.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelBot {
@@ -283,14 +500,22 @@ pub struct ChannelBot {
     pub name: String,
     pub platform_id: String,
     pub config: HashMap<String, String>,
+    #[serde(default = "default_agent_id")]
+    pub agent_id: String,
     pub created_at: u64,
+}
+
+fn default_agent_id() -> String {
+    "default".to_string()
 }
 
 fn channels_json_path() -> std::path::PathBuf {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .unwrap_or_else(|_| ".".to_string());
-    std::path::PathBuf::from(home).join(".openotter").join("channels.json")
+    std::path::PathBuf::from(home)
+        .join(".openotter")
+        .join("channels.json")
 }
 
 fn load_channel_bots() -> Vec<ChannelBot> {
@@ -311,6 +536,14 @@ fn save_channel_bots(bots: &[ChannelBot]) -> Result<(), String> {
     std::fs::write(&path, data).map_err(|e| format!("Failed to write channels.json: {}", e))
 }
 
+fn sync_bot_credentials_to_profile(agent_id: &str, config: &HashMap<String, String>) -> Result<(), String> {
+    for (key, value) in config {
+        agent_manager::update_agent_env(agent_id, key, value)?;
+    }
+    agent_manager::update_agent_env(agent_id, "GATEWAY_ALLOW_ALL_USERS", "true")?;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn list_channel_bots() -> Vec<ChannelBot> {
     load_channel_bots()
@@ -321,10 +554,13 @@ pub struct AddChannelBotRequest {
     pub name: String,
     pub platform_id: String,
     pub config: HashMap<String, String>,
+    pub agent_id: Option<String>,
 }
 
 #[tauri::command]
 pub fn add_channel_bot(request: AddChannelBotRequest) -> Result<ChannelBot, String> {
+    let agent_id = request.agent_id.unwrap_or_else(|| "default".to_string());
+
     let mut bots = load_channel_bots();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -336,9 +572,12 @@ pub fn add_channel_bot(request: AddChannelBotRequest) -> Result<ChannelBot, Stri
         id: id.clone(),
         name: request.name,
         platform_id: request.platform_id,
-        config: request.config,
+        config: request.config.clone(),
+        agent_id: agent_id.clone(),
         created_at: now,
     };
+
+    sync_bot_credentials_to_profile(&agent_id, &request.config)?;
 
     bots.push(bot.clone());
     save_channel_bots(&bots)?;
@@ -350,18 +589,35 @@ pub struct UpdateChannelBotRequest {
     pub id: String,
     pub name: Option<String>,
     pub config: Option<HashMap<String, String>>,
+    pub agent_id: Option<String>,
 }
 
 #[tauri::command]
 pub fn update_channel_bot(request: UpdateChannelBotRequest) -> Result<ChannelBot, String> {
     let mut bots = load_channel_bots();
-    let bot = bots.iter_mut().find(|b| b.id == request.id)
+    let bot = bots
+        .iter_mut()
+        .find(|b| b.id == request.id)
         .ok_or_else(|| format!("Bot not found: {}", request.id))?;
 
     if let Some(name) = request.name {
         bot.name = name;
     }
+
+    let old_agent_id = bot.agent_id.clone();
+    if let Some(ref agent_id) = request.agent_id {
+        bot.agent_id = agent_id.clone();
+    }
+
     if let Some(config) = request.config {
+        if bot.agent_id != old_agent_id {
+            for key in config.keys() {
+                let _ = agent_manager::remove_agent_env(&old_agent_id, key);
+            }
+            let _ = agent_manager::remove_agent_env(&old_agent_id, "GATEWAY_ALLOW_ALL_USERS");
+            let _ = agent_manager::unconfigure_platform(&old_agent_id, &bot.platform_id);
+        }
+        sync_bot_credentials_to_profile(&bot.agent_id, &config)?;
         bot.config = config;
     }
 
@@ -396,58 +652,24 @@ pub async fn start_agent_gateway(
         }
     }
 
-    let agent = agent_manager::get_agent(&id).ok_or("Agent not found")?;
-    let agent_home = agent_manager::agent_home(&id);
+    let _agent = agent_manager::get_agent(&id).ok_or("Agent not found")?;
 
     let hermes_bin = gateway_manager::hermes_bin_path()
         .ok_or("Hermes binary not found. Please install Hermes Agent first.")?;
 
-    let agent_env_path = agent_home.join(".env");
-    let agent_env_vars: Vec<(String, String)> = if agent_env_path.exists() {
-        std::fs::read_to_string(&agent_env_path)
-            .unwrap_or_default()
-            .lines()
-            .filter(|l| {
-                let t = l.trim();
-                !t.is_empty() && !t.starts_with('#') && t.contains('=')
-            })
-            .filter_map(|l| {
-                let mut parts = l.splitn(2, '=');
-                let key = parts.next()?.trim().to_string();
-                let val = parts.next()?.trim().to_string();
-                if key.is_empty() { None } else { Some((key, val)) }
-            })
-            .collect()
-    } else {
-        vec![]
-    };
-
-    let soul_path = agent_home.join("SOUL.md");
-    let soul_md = if soul_path.exists() {
-        std::fs::read_to_string(&soul_path).unwrap_or_default()
-    } else {
-        String::new()
-    };
-
     use std::process::Command;
 
     let mut cmd = Command::new(&hermes_bin);
-    cmd.args(["gateway", "run", "--replace"])
-        .env("GATEWAY_ALLOW_ALL_USERS", "true")
+
+    if id == "default" {
+        cmd.args(["gateway", "run", "--replace"]);
+    } else {
+        cmd.args(["-p", &id, "gateway", "run", "--replace"]);
+    }
+
+    cmd.env("GATEWAY_ALLOW_ALL_USERS", "true")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-
-    for (key, val) in &agent_env_vars {
-        cmd.env(key, val);
-    }
-
-    if !soul_md.is_empty() {
-        cmd.env("HERMES_SOUL", &soul_md);
-    }
-
-    if !agent.model.is_empty() {
-        cmd.env("HERMES_MODEL", &agent.model);
-    }
 
     let child = cmd
         .spawn()
@@ -549,8 +771,12 @@ pub async fn get_agent_messages(id: String, limit: Option<u32>) -> Result<Vec<Im
     let mut all_sessions: Vec<ImSession> = Vec::new();
 
     for platform in &agent.platforms {
-        let output = std::process::Command::new(&hermes_bin)
-            .args(["sessions", "export", "--source", platform, "-"])
+        let mut cmd = std::process::Command::new(&hermes_bin);
+        if id != "default" {
+            cmd.args(["-p", &id]);
+        }
+        cmd.args(["sessions", "export", "--source", platform, "-"]);
+        let output = cmd
             .output()
             .map_err(|e| format!("Failed to run hermes sessions: {}", e))?;
 
@@ -1435,6 +1661,490 @@ pub fn get_skill_content(name: String) -> Result<String, String> {
         .ok_or_else(|| format!("Skill '{}' not found", name))
 }
 
+// ─── Skill Installation ──────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SkillValidation {
+    pub valid: bool,
+    pub name: String,
+    pub description: String,
+    pub has_skill_md: bool,
+    pub has_frontmatter: bool,
+    pub path: String,
+    pub errors: Vec<String>,
+    pub warnings: Vec<String>,
+    pub already_installed: bool,
+}
+
+fn parse_skill_frontmatter(content: &str) -> (String, String, bool) {
+    let trimmed = content.trim();
+    if !trimmed.starts_with("---") {
+        return (String::new(), String::new(), false);
+    }
+    let after_first = &trimmed[3..];
+    if let Some(end_idx) = after_first.find("---") {
+        let yaml_block = &after_first[..end_idx];
+        let mut name = String::new();
+        let mut description = String::new();
+        for line in yaml_block.lines() {
+            let line = line.trim();
+            if let Some(val) = line.strip_prefix("name:") {
+                name = val.trim().trim_matches('"').trim_matches('\'').to_string();
+            } else if let Some(val) = line.strip_prefix("description:") {
+                description = val.trim().trim_matches('"').trim_matches('\'').to_string();
+            }
+        }
+        (name, description, true)
+    } else {
+        (String::new(), String::new(), false)
+    }
+}
+
+fn skills_install_dir() -> std::path::PathBuf {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| ".".to_string());
+    std::path::PathBuf::from(home).join(".hermes").join("skills")
+}
+
+#[tauri::command]
+pub fn validate_local_skill(path: String) -> SkillValidation {
+    let skill_path = std::path::PathBuf::from(&path);
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+    let mut name = String::new();
+    let mut description = String::new();
+    let mut has_skill_md = false;
+    let mut has_frontmatter = false;
+
+    if !skill_path.exists() {
+        errors.push("路径不存在".to_string());
+        return SkillValidation {
+            valid: false, name, description, has_skill_md, has_frontmatter,
+            path: path.clone(), errors, warnings, already_installed: false,
+        };
+    }
+
+    let (check_dir, md_path) = if skill_path.is_file() {
+        let fname = skill_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if fname == "SKILL.md" || fname == "README.md" {
+            (skill_path.parent().map(|p| p.to_path_buf()), Some(skill_path.clone()))
+        } else {
+            errors.push("文件不是 SKILL.md 或 README.md".to_string());
+            return SkillValidation {
+                valid: false, name, description, has_skill_md, has_frontmatter,
+                path: path.clone(), errors, warnings, already_installed: false,
+            };
+        }
+    } else {
+        let skill_md = skill_path.join("SKILL.md");
+        let readme_md = skill_path.join("README.md");
+        let found = if skill_md.exists() {
+            Some(skill_md)
+        } else if readme_md.exists() {
+            Some(readme_md)
+        } else {
+            None
+        };
+        (Some(skill_path.clone()), found)
+    };
+
+    let install_dir = check_dir.unwrap_or_else(|| skill_path.clone());
+
+    if let Some(ref md) = md_path {
+        has_skill_md = true;
+        match std::fs::read_to_string(md) {
+            Ok(content) => {
+                let (parsed_name, parsed_desc, has_fm) = parse_skill_frontmatter(&content);
+                has_frontmatter = has_fm;
+                if has_fm {
+                    name = parsed_name;
+                    description = parsed_desc;
+                }
+
+                if name.is_empty() {
+                    name = install_dir
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    if has_fm {
+                        warnings.push("YAML frontmatter 中缺少 name 字段，将使用目录名".to_string());
+                    }
+                }
+                if description.is_empty() {
+                    warnings.push("缺少 description 字段".to_string());
+                }
+                if !has_fm {
+                    warnings.push("缺少 YAML frontmatter（--- 分隔块）".to_string());
+                }
+                if content.trim().len() < 10 {
+                    errors.push("SKILL.md 内容过短".to_string());
+                }
+            }
+            Err(e) => {
+                errors.push(format!("无法读取文件: {}", e));
+            }
+        }
+    } else {
+        errors.push("目录中未找到 SKILL.md 或 README.md".to_string());
+    }
+
+    if name.is_empty() {
+        name = install_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+    }
+
+    let target = skills_install_dir().join(&name);
+    let already_installed = target.exists();
+    if already_installed {
+        warnings.push(format!("技能 '{}' 已存在，安装将覆盖", name));
+    }
+
+    SkillValidation {
+        valid: errors.is_empty() && has_skill_md,
+        name,
+        description,
+        has_skill_md,
+        has_frontmatter,
+        path: install_dir.to_string_lossy().to_string(),
+        errors,
+        warnings,
+        already_installed,
+    }
+}
+
+#[tauri::command]
+pub fn install_local_skill(path: String) -> Result<String, String> {
+    let validation = validate_local_skill(path.clone());
+    if !validation.valid {
+        return Err(format!("技能验证失败: {}", validation.errors.join("; ")));
+    }
+
+    let source = std::path::PathBuf::from(&validation.path);
+    let dest = skills_install_dir().join(&validation.name);
+
+    std::fs::create_dir_all(skills_install_dir())
+        .map_err(|e| format!("无法创建技能目录: {}", e))?;
+
+    if dest.exists() {
+        std::fs::remove_dir_all(&dest)
+            .map_err(|e| format!("无法移除已有技能: {}", e))?;
+    }
+
+    fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
+        std::fs::create_dir_all(dst).map_err(|e| format!("创建目录失败: {}", e))?;
+        for entry in std::fs::read_dir(src).map_err(|e| format!("读取目录失败: {}", e))? {
+            let entry = entry.map_err(|e| format!("读取条目失败: {}", e))?;
+            let src_path = entry.path();
+            let dst_path = dst.join(entry.file_name());
+            if src_path.is_dir() {
+                copy_dir_recursive(&src_path, &dst_path)?;
+            } else {
+                std::fs::copy(&src_path, &dst_path)
+                    .map_err(|e| format!("复制文件失败: {}", e))?;
+            }
+        }
+        Ok(())
+    }
+
+    if source.is_dir() {
+        copy_dir_recursive(&source, &dest)?;
+    } else {
+        std::fs::create_dir_all(&dest)
+            .map_err(|e| format!("创建目录失败: {}", e))?;
+        let fname = source.file_name().ok_or("无法获取文件名")?;
+        std::fs::copy(&source, dest.join(fname))
+            .map_err(|e| format!("复制文件失败: {}", e))?;
+    }
+
+    Ok(validation.name)
+}
+
+// ─── Agent Evolution ─────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EvolutionEvent {
+    pub timestamp: i64,
+    pub event_type: String,
+    pub title: String,
+    pub detail: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SkillTimeline {
+    pub name: String,
+    pub installed_at: i64,
+    pub modified_at: i64,
+    pub size_bytes: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MemoryFileInfo {
+    pub name: String,
+    pub modified_at: i64,
+    pub size_bytes: u64,
+    pub preview: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AgentEvolution {
+    pub agent_id: String,
+    pub agent_name: String,
+    pub created_at: u64,
+    pub total_sessions: u64,
+    pub total_messages: u64,
+    pub total_skills: u64,
+    pub total_memories: u64,
+    pub level: u32,
+    pub xp: u64,
+    pub xp_next: u64,
+    pub level_title: String,
+    pub skills_timeline: Vec<SkillTimeline>,
+    pub memory_files: Vec<MemoryFileInfo>,
+    pub events: Vec<EvolutionEvent>,
+    pub daily_messages: Vec<(String, u64)>,
+}
+
+fn compute_level(xp: u64) -> (u32, u64, &'static str) {
+    let thresholds: Vec<(u32, u64, &str)> = vec![
+        (1, 0, "初生"),
+        (2, 50, "新芽"),
+        (3, 150, "学徒"),
+        (4, 400, "探索者"),
+        (5, 800, "助手"),
+        (6, 1500, "专家"),
+        (7, 3000, "大师"),
+        (8, 5000, "贤者"),
+        (9, 8000, "先知"),
+        (10, 12000, "超越者"),
+    ];
+    let mut current = (1u32, 50u64, "初生");
+    for (level, threshold, title) in &thresholds {
+        if xp >= *threshold {
+            let next = thresholds
+                .iter()
+                .find(|(l, _, _)| l > level)
+                .map(|(_, t, _)| *t)
+                .unwrap_or(*threshold + 5000);
+            current = (*level, next, title);
+        }
+    }
+    current
+}
+
+fn epoch_secs(meta: &std::fs::Metadata, use_modified: bool) -> i64 {
+    let time = if use_modified {
+        meta.modified().ok()
+    } else {
+        meta.created().ok().or_else(|| meta.modified().ok())
+    };
+    time.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+#[tauri::command]
+pub fn get_agent_evolution(id: String) -> Result<AgentEvolution, String> {
+    let agent = agent_manager::get_agent(&id).ok_or("Agent not found")?;
+    let agent_home = agent_manager::agent_home(&id);
+
+    let mut total_sessions: u64 = 0;
+    let mut total_messages: u64 = 0;
+    let mut daily_messages: Vec<(String, u64)> = vec![];
+
+    let sessions_dir = agent_home.join("sessions");
+    if sessions_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&sessions_dir) {
+            let mut daily_map: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+                total_sessions += 1;
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    let msg_count = content.matches("\"role\"").count() as u64;
+                    total_messages += msg_count;
+                }
+                if let Ok(meta) = std::fs::metadata(&path) {
+                    let ts = epoch_secs(&meta, false);
+                    if ts > 0 {
+                        let day = chrono::DateTime::from_timestamp(ts, 0)
+                            .map(|dt| dt.format("%Y-%m-%d").to_string())
+                            .unwrap_or_default();
+                        if !day.is_empty() {
+                            *daily_map.entry(day).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+            let mut sorted: Vec<(String, u64)> = daily_map.into_iter().collect();
+            sorted.sort_by(|a, b| a.0.cmp(&b.0));
+            if sorted.len() > 90 {
+                sorted = sorted.split_off(sorted.len() - 90);
+            }
+            daily_messages = sorted;
+        }
+    }
+
+    let skills_dir = agent_home.join("skills");
+
+    let mut skills_timeline = Vec::new();
+    if skills_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&skills_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    let name = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("")
+                        .to_string();
+                    if name.is_empty() || name.starts_with('.') {
+                        continue;
+                    }
+                    let meta = std::fs::metadata(&path).ok();
+                    let dir_size: u64 = std::fs::read_dir(&path)
+                        .map(|entries| {
+                            entries
+                                .flatten()
+                                .filter_map(|e| e.metadata().ok())
+                                .map(|m| m.len())
+                                .sum()
+                        })
+                        .unwrap_or(0);
+
+                    skills_timeline.push(SkillTimeline {
+                        name,
+                        installed_at: meta.as_ref().map(|m| epoch_secs(m, false)).unwrap_or(0),
+                        modified_at: meta.as_ref().map(|m| epoch_secs(m, true)).unwrap_or(0),
+                        size_bytes: dir_size,
+                    });
+                }
+            }
+        }
+    }
+    skills_timeline.sort_by(|a, b| b.installed_at.cmp(&a.installed_at));
+
+    let memories_dir = agent_home.join("memories");
+    let mut memory_files = Vec::new();
+    if memories_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&memories_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    let name = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let meta = std::fs::metadata(&path).ok();
+                    let preview = std::fs::read_to_string(&path)
+                        .ok()
+                        .map(|c| {
+                            let trimmed = c.trim();
+                            if trimmed.len() > 200 {
+                                format!("{}...", &trimmed[..200])
+                            } else {
+                                trimmed.to_string()
+                            }
+                        })
+                        .unwrap_or_default();
+
+                    memory_files.push(MemoryFileInfo {
+                        name,
+                        modified_at: meta.as_ref().map(|m| epoch_secs(m, true)).unwrap_or(0),
+                        size_bytes: meta.map(|m| m.len()).unwrap_or(0),
+                        preview,
+                    });
+                }
+            }
+        }
+    }
+    memory_files.sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
+
+    let xp = total_messages * 2 + total_sessions * 10 + (skills_timeline.len() as u64) * 50 + (memory_files.len() as u64) * 30;
+    let (level, xp_next, level_title) = compute_level(xp);
+
+    let mut events: Vec<EvolutionEvent> = Vec::new();
+
+    events.push(EvolutionEvent {
+        timestamp: agent.created_at as i64,
+        event_type: "birth".to_string(),
+        title: format!("🎉 {} 诞生", agent.name),
+        detail: format!("Agent 被创建，使用模型 {}", agent.model),
+    });
+
+    for skill in &skills_timeline {
+        events.push(EvolutionEvent {
+            timestamp: skill.installed_at,
+            event_type: "skill".to_string(),
+            title: format!("⚡ 习得技能: {}", skill.name),
+            detail: format!("安装了新技能，大小 {:.1}KB", skill.size_bytes as f64 / 1024.0),
+        });
+    }
+
+    for mem in &memory_files {
+        events.push(EvolutionEvent {
+            timestamp: mem.modified_at,
+            event_type: "memory".to_string(),
+            title: format!("🧠 记忆更新: {}", mem.name),
+            detail: if mem.preview.len() > 80 {
+                format!("{}...", &mem.preview[..80])
+            } else {
+                mem.preview.clone()
+            },
+        });
+    }
+
+    let milestones = [
+        (10, "💬 完成第 10 次对话"),
+        (50, "💬 完成第 50 次对话"),
+        (100, "🏆 完成第 100 次对话"),
+        (500, "🌟 完成第 500 次对话"),
+        (1000, "👑 完成第 1000 次对话"),
+    ];
+    for (threshold, label) in milestones {
+        if total_sessions >= threshold {
+            events.push(EvolutionEvent {
+                timestamp: 0,
+                event_type: "milestone".to_string(),
+                title: label.to_string(),
+                detail: format!("累计完成 {} 次对话", total_sessions),
+            });
+        }
+    }
+
+    events.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+
+    Ok(AgentEvolution {
+        agent_id: id,
+        agent_name: agent.name,
+        created_at: agent.created_at,
+        total_sessions,
+        total_messages,
+        total_skills: skills_timeline.len() as u64,
+        total_memories: memory_files.len() as u64,
+        level,
+        xp,
+        xp_next,
+        level_title: level_title.to_string(),
+        skills_timeline,
+        memory_files,
+        events,
+        daily_messages,
+    })
+}
+
+#[tauri::command]
+pub fn get_evolution_log(limit: Option<u32>) -> Vec<crate::evolution_watcher::EvolutionLogEntry> {
+    crate::evolution_watcher::get_evolution_log(limit.unwrap_or(50))
+}
+
 // ─── Memory / Sessions ────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -2008,75 +2718,6 @@ pub fn set_credential_pool(provider: String, entries: Vec<crate::credential_pool
     true
 }
 
-// ─── Claw3D ────────────────────────────────────────────────
-
-#[tauri::command]
-pub fn claw3d_get_status(state: State<'_, Mutex<crate::claw3d::Claw3dState>>) -> crate::claw3d::Claw3dStatus {
-    let s = state.lock().unwrap();
-    crate::claw3d::get_status(&s)
-}
-
-#[tauri::command]
-pub fn claw3d_setup(app: tauri::AppHandle) -> Result<(), String> {
-    crate::claw3d::setup_claw3d(&app)
-}
-
-#[tauri::command]
-pub fn claw3d_start_all(state: State<'_, Mutex<crate::claw3d::Claw3dState>>) -> Result<(), String> {
-    let mut s = state.lock().unwrap();
-    crate::claw3d::start_all(&mut s)
-}
-
-#[tauri::command]
-pub fn claw3d_stop_all(state: State<'_, Mutex<crate::claw3d::Claw3dState>>) {
-    let mut s = state.lock().unwrap();
-    crate::claw3d::stop_all(&mut s);
-}
-
-#[tauri::command]
-pub fn claw3d_start_dev(state: State<'_, Mutex<crate::claw3d::Claw3dState>>) -> Result<(), String> {
-    let mut s = state.lock().unwrap();
-    crate::claw3d::start_dev_server(&mut s)
-}
-
-#[tauri::command]
-pub fn claw3d_stop_dev(state: State<'_, Mutex<crate::claw3d::Claw3dState>>) {
-    let mut s = state.lock().unwrap();
-    crate::claw3d::stop_dev_server(&mut s);
-}
-
-#[tauri::command]
-pub fn claw3d_start_adapter(state: State<'_, Mutex<crate::claw3d::Claw3dState>>) -> Result<(), String> {
-    let mut s = state.lock().unwrap();
-    crate::claw3d::start_adapter(&mut s)
-}
-
-#[tauri::command]
-pub fn claw3d_stop_adapter(state: State<'_, Mutex<crate::claw3d::Claw3dState>>) {
-    let mut s = state.lock().unwrap();
-    crate::claw3d::stop_adapter(&mut s);
-}
-
-#[tauri::command]
-pub fn claw3d_get_port() -> u16 {
-    crate::claw3d::get_saved_port()
-}
-
-#[tauri::command]
-pub fn claw3d_set_port(port: u16) {
-    crate::claw3d::set_saved_port(port);
-}
-
-#[tauri::command]
-pub fn claw3d_get_ws_url() -> String {
-    crate::claw3d::get_saved_ws_url()
-}
-
-#[tauri::command]
-pub fn claw3d_set_ws_url(url: String) {
-    crate::claw3d::set_saved_ws_url(&url);
-}
-
 // ─── Helpers ───────────────────────────────────────────────
 
 fn detect_hermes_version() -> Option<String> {
@@ -2093,6 +2734,383 @@ fn detect_hermes_version() -> Option<String> {
             Some(trimmed.to_string())
         }
     })
+}
+
+// ─── QR Code Pairing (In-App) ────────────────────────────────
+
+pub struct QrSessionState {
+    pub child_pid: Option<u32>,
+}
+
+impl Default for QrSessionState {
+    fn default() -> Self {
+        Self { child_pid: None }
+    }
+}
+
+fn strip_ansi(s: &str) -> String {
+    let mut result = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1B' {
+            match chars.peek() {
+                Some('[') => {
+                    chars.next();
+                    for sc in chars.by_ref() {
+                        if sc.is_ascii_alphabetic() {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    chars.next();
+                    for sc in chars.by_ref() {
+                        if sc == '\x07' || sc == '\\' {
+                            break;
+                        }
+                    }
+                }
+                _ => {
+                    chars.next();
+                }
+            }
+        } else if c == '\r' {
+            continue;
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct QrSessionUpdate {
+    pub stage: String,
+    pub qr_url: Option<String>,
+    pub message: String,
+    pub credentials: Option<HashMap<String, String>>,
+}
+
+#[tauri::command]
+pub fn start_qr_session(
+    platform: String,
+    qr_state: State<'_, Mutex<QrSessionState>>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    {
+        let mut state = qr_state.lock().unwrap();
+        if let Some(pid) = state.child_pid.take() {
+            let _ = kill_process(pid);
+        }
+    }
+
+    let hermes_bin = gateway_manager::hermes_bin_path()
+        .ok_or("Hermes binary not found")?;
+    let hermes_home_dir = {
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_else(|_| ".".to_string());
+        std::path::PathBuf::from(&home).join(".hermes")
+    };
+
+    match platform.as_str() {
+        "weixin" => {
+            let py_script = format!(
+                r#"
+import sys, os, json, asyncio
+sys.path.insert(0, os.path.join(os.path.expanduser("~"), ".hermes", "hermes-agent"))
+os.environ.setdefault("HERMES_HOME", "{hermes_home}")
+from gateway.platforms.weixin import qr_login
+async def main():
+    result = await qr_login("{hermes_home}", timeout_seconds=300)
+    if result:
+        print("QR_RESULT:" + json.dumps(result), flush=True)
+    else:
+        print("QR_RESULT:null", flush=True)
+asyncio.run(main())
+"#,
+                hermes_home = hermes_home_dir.to_string_lossy()
+            );
+
+            let child = std::process::Command::new("python3")
+                .args(["-u", "-c", &py_script])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .map_err(|e| format!("Failed to start Python: {}", e))?;
+
+            let pid = child.id();
+            {
+                let mut state = qr_state.lock().unwrap();
+                state.child_pid = Some(pid);
+            }
+
+            let stdout = child.stdout.unwrap();
+            let stderr = child.stderr.unwrap();
+            let handle = app_handle.clone();
+
+            std::thread::spawn(move || {
+                let stderr_handle = handle.clone();
+                let stderr_thread = std::thread::spawn(move || {
+                    use std::io::{BufRead, BufReader};
+                    let reader = BufReader::new(stderr);
+                    for line in reader.lines().flatten() {
+                        let _ = stderr_handle.emit("qr-session-output", &line);
+                    }
+                });
+
+                use std::io::{BufRead, BufReader};
+                let reader = BufReader::new(stdout);
+                for line in reader.lines().flatten() {
+                    if line.starts_with("QR_RESULT:") {
+                        let json_str = &line["QR_RESULT:".len()..];
+                        if json_str != "null" {
+                            if let Ok(raw_creds) =
+                                serde_json::from_str::<HashMap<String, String>>(json_str)
+                            {
+                                let mut creds = HashMap::new();
+                                if let Some(v) = raw_creds.get("account_id") {
+                                    creds.insert("WEIXIN_ACCOUNT_ID".to_string(), v.clone());
+                                }
+                                if let Some(v) = raw_creds.get("token") {
+                                    creds.insert("WEIXIN_TOKEN".to_string(), v.clone());
+                                }
+                                let update = QrSessionUpdate {
+                                    stage: "paired".to_string(),
+                                    qr_url: None,
+                                    message: "微信连接成功！".to_string(),
+                                    credentials: Some(creds),
+                                };
+                                let _ = handle.emit("qr-session-update", &update);
+                            }
+                        } else {
+                            let update = QrSessionUpdate {
+                                stage: "failed".to_string(),
+                                qr_url: None,
+                                message: "微信登录失败或超时".to_string(),
+                                credentials: None,
+                            };
+                            let _ = handle.emit("qr-session-update", &update);
+                        }
+                    } else if line.contains("http") && line.contains("qrcode") {
+                        let url = line.trim().to_string();
+                        let update = QrSessionUpdate {
+                            stage: "qr_ready".to_string(),
+                            qr_url: Some(url),
+                            message: "请使用微信扫描二维码".to_string(),
+                            credentials: None,
+                        };
+                        let _ = handle.emit("qr-session-update", &update);
+                    } else {
+                        let _ = handle.emit("qr-session-output", &line);
+                    }
+                }
+
+                let _ = stderr_thread.join();
+                let _ = handle.emit("qr-session-ended", "weixin");
+            });
+
+            Ok(())
+        }
+        "whatsapp" => {
+            let sub_cmd = format!("{} whatsapp 2>&1", hermes_bin.to_string_lossy());
+            let temp_log = std::env::temp_dir().join("hermes-qr-whatsapp.log");
+            let _ = std::fs::remove_file(&temp_log);
+            let temp_str = temp_log.to_string_lossy().to_string();
+
+            #[cfg(target_os = "macos")]
+            let child = {
+                std::process::Command::new("script")
+                    .args(["-q", &temp_str, "bash", "-c", &sub_cmd])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                    .map_err(|e| format!("Failed to start QR session: {}", e))?
+            };
+
+            #[cfg(target_os = "linux")]
+            let child = {
+                std::process::Command::new("script")
+                    .args(["-qc", &sub_cmd, &temp_str])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                    .map_err(|e| format!("Failed to start QR session: {}", e))?
+            };
+
+            #[cfg(target_os = "windows")]
+            let child = {
+                std::process::Command::new(hermes_bin)
+                    .arg("whatsapp")
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                    .map_err(|e| format!("Failed to start QR session: {}", e))?
+            };
+
+            let pid = child.id();
+            {
+                let mut state = qr_state.lock().unwrap();
+                state.child_pid = Some(pid);
+            }
+
+            let handle = app_handle.clone();
+            let log_path = temp_log.clone();
+
+            std::thread::spawn(move || {
+                let mut last_size: u64 = 0;
+                let interval = std::time::Duration::from_millis(300);
+                loop {
+                    std::thread::sleep(interval);
+                    if let Ok(meta) = std::fs::metadata(&log_path) {
+                        let sz = meta.len();
+                        if sz > last_size {
+                            if let Ok(content) = std::fs::read_to_string(&log_path) {
+                                let new = if last_size == 0 {
+                                    content.as_str()
+                                } else {
+                                    &content[last_size as usize..]
+                                };
+                                let cleaned = strip_ansi(new);
+                                if !cleaned.trim().is_empty() {
+                                    let _ = handle.emit("qr-session-output", &cleaned);
+                                }
+                                last_size = sz;
+                            }
+                        }
+                    }
+                    #[cfg(unix)]
+                    {
+                        let check = std::process::Command::new("kill")
+                            .args(["-0", &pid.to_string()])
+                            .output();
+                        if let Ok(o) = check {
+                            if !o.status.success() {
+                                break;
+                            }
+                        }
+                    }
+                }
+                let _ = handle.emit("qr-session-ended", "whatsapp");
+                let _ = std::fs::remove_file(&log_path);
+            });
+
+            Ok(())
+        }
+        _ => Err(format!("Unsupported platform: {}", platform)),
+    }
+}
+
+#[tauri::command]
+pub fn stop_qr_session(
+    qr_state: State<'_, Mutex<QrSessionState>>,
+) -> Result<(), String> {
+    let mut state = qr_state.lock().unwrap();
+    if let Some(pid) = state.child_pid.take() {
+        kill_process(pid)?;
+    }
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+pub struct QrCredentialResult {
+    pub found: bool,
+    pub credentials: HashMap<String, String>,
+    pub message: String,
+}
+
+#[tauri::command]
+pub fn detect_qr_credentials(platform: String) -> Result<QrCredentialResult, String> {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| ".".to_string());
+    let hermes_home = std::path::PathBuf::from(&home).join(".hermes");
+
+    match platform.as_str() {
+        "whatsapp" => {
+            let creds_path = hermes_home
+                .join("whatsapp")
+                .join("session")
+                .join("creds.json");
+            if creds_path.exists() {
+                let mut credentials = HashMap::new();
+                credentials.insert("WHATSAPP_ENABLED".to_string(), "true".to_string());
+                credentials.insert("WHATSAPP_MODE".to_string(), "bot".to_string());
+                Ok(QrCredentialResult {
+                    found: true,
+                    credentials,
+                    message: "WhatsApp 配对成功！已检测到有效会话。".to_string(),
+                })
+            } else {
+                Ok(QrCredentialResult {
+                    found: false,
+                    credentials: HashMap::new(),
+                    message: "未检测到 WhatsApp 会话。请等待扫码完成。".to_string(),
+                })
+            }
+        }
+        "weixin" => {
+            let env_path = hermes_home.join(".env");
+            if env_path.exists() {
+                if let Ok(content) = std::fs::read_to_string(&env_path) {
+                    let mut credentials = HashMap::new();
+                    for line in content.lines() {
+                        let t = line.trim();
+                        if let Some(val) = t.strip_prefix("WEIXIN_ACCOUNT_ID=") {
+                            if !val.is_empty() {
+                                credentials
+                                    .insert("WEIXIN_ACCOUNT_ID".to_string(), val.to_string());
+                            }
+                        }
+                        if let Some(val) = t.strip_prefix("WEIXIN_TOKEN=") {
+                            if !val.is_empty() {
+                                credentials.insert("WEIXIN_TOKEN".to_string(), val.to_string());
+                            }
+                        }
+                    }
+                    if credentials.contains_key("WEIXIN_ACCOUNT_ID")
+                        && credentials.contains_key("WEIXIN_TOKEN")
+                    {
+                        return Ok(QrCredentialResult {
+                            found: true,
+                            credentials,
+                            message: "微信配对成功！已检测到凭证。".to_string(),
+                        });
+                    }
+                }
+            }
+            Ok(QrCredentialResult {
+                found: false,
+                credentials: HashMap::new(),
+                message: "未检测到微信凭证。请等待扫码完成。".to_string(),
+            })
+        }
+        _ => Err(format!("Unsupported: {}", platform)),
+    }
+}
+
+#[tauri::command]
+pub fn check_qr_platform_support(platform: String) -> Result<bool, String> {
+    let hermes_bin = match gateway_manager::hermes_bin_path() {
+        Some(p) => p,
+        None => return Ok(false),
+    };
+
+    match platform.as_str() {
+        "whatsapp" => {
+            let output = std::process::Command::new(&hermes_bin)
+                .args(["whatsapp", "--help"])
+                .output();
+            Ok(output.map(|o| o.status.success()).unwrap_or(false))
+        }
+        "weixin" => {
+            let output = std::process::Command::new(&hermes_bin)
+                .args(["gateway", "setup", "--help"])
+                .output();
+            Ok(output.map(|o| o.status.success()).unwrap_or(false))
+        }
+        _ => Ok(false),
+    }
 }
 
 fn kill_process(pid: u32) -> Result<(), String> {

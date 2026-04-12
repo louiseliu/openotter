@@ -46,7 +46,6 @@ Running AI agents today means wrestling with Python environments, terminal comma
 - **Cron Jobs** — Schedule recurring agent tasks
 - **Skills Management** — Browse and manage agent skill files
 - **Memory & Sessions** — Search through agent conversation history and memory
-- **Claw3D** — Integrated 3D environment for spatial agent interaction
 - **Dark / Light Theme** — Polished UI with system-level theme toggling
 - **Auto-update** — Built-in update mechanism for seamless upgrades
 - **China Network Detection** — Automatic mirror selection for users behind the GFW

@@ -1,8 +1,8 @@
 mod agent_manager;
-mod claw3d;
 mod commands;
 mod config;
 mod credential_pool;
+mod evolution_watcher;
 mod gateway_manager;
 mod hermes_installer;
 mod model_manager;
@@ -19,11 +19,13 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
+        .manage(std::sync::Mutex::new(commands::QrSessionState::default()))
         .setup(|app| {
             sidecar::init_sidecar_state(app);
             gateway_manager::init_gateway_state(app);
             agent_manager::ensure_dirs();
-            claw3d::init_claw3d_state(app);
+            evolution_watcher::init_watcher(app);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -36,8 +38,13 @@ pub fn run() {
             delete_agent,
             get_agent_soul,
             update_agent_soul,
+            // Profile Files
+            list_profile_files,
+            get_profile_file,
+            save_profile_file,
             // Platform configuration
             configure_platform,
+            unconfigure_platform,
             get_platform_templates,
             // Channel Bots
             list_channel_bots,
@@ -95,19 +102,17 @@ pub fn run() {
             // Credential Pool
             get_credential_pool,
             set_credential_pool,
-            // Claw3D
-            claw3d_get_status,
-            claw3d_setup,
-            claw3d_start_all,
-            claw3d_stop_all,
-            claw3d_start_dev,
-            claw3d_stop_dev,
-            claw3d_start_adapter,
-            claw3d_stop_adapter,
-            claw3d_get_port,
-            claw3d_set_port,
-            claw3d_get_ws_url,
-            claw3d_set_ws_url,
+            // Skill Installation
+            validate_local_skill,
+            install_local_skill,
+            // Agent Evolution
+            get_agent_evolution,
+            get_evolution_log,
+            // QR Code Pairing
+            start_qr_session,
+            stop_qr_session,
+            detect_qr_credentials,
+            check_qr_platform_support,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

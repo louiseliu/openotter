@@ -65,7 +65,7 @@ pub fn check_global_gateway() -> GlobalGatewayInfo {
         let _ = tx.send(result);
     });
 
-    let output = match rx.recv_timeout(std::time::Duration::from_secs(3)) {
+    let output = match rx.recv_timeout(std::time::Duration::from_secs(1)) {
         Ok(result) => result,
         Err(_) => return GlobalGatewayInfo { running: false, pid: None },
     };

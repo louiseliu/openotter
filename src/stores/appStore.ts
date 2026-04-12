@@ -18,8 +18,7 @@ export type View =
   | "mcp"
   | "toolset"
   | "models"
-  | "credentials"
-  | "claw3d";
+  | "credentials";
 
 export interface AppStatus {
   install_status: "NotInstalled" | "NeedsSetup" | { Broken: string } | "Ready";

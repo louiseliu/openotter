@@ -24,8 +24,8 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).parent
 PROJECT_DIR = SCRIPT_DIR.parent
 BINARIES_DIR = PROJECT_DIR / "src-tauri" / "binaries"
-HERMES_HOME = Path.home() / ".hermes"
-HERMES_AGENT_DIR = HERMES_HOME / "hermes-agent"
+HERMES_HOME = Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes")))
+HERMES_AGENT_DIR = Path(os.environ.get("HERMES_AGENT_DIR", str(HERMES_HOME / "hermes-agent")))
 HERMES_VENV = HERMES_AGENT_DIR / "venv"
 
 

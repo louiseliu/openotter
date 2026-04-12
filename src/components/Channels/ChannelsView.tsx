@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import {
   Plus,
   ExternalLink,
@@ -11,16 +12,31 @@ import {
   Trash2,
   Pencil,
   Radio,
+  QrCode,
+  Check,
+  AlertTriangle,
 } from "lucide-react";
 import {
   getPlatformTemplates,
   listChannelBots,
+  listAgents,
   addChannelBot,
   updateChannelBot,
   removeChannelBot,
+  startQrSession,
+  stopQrSession,
+  detectQrCredentials,
+  checkQrPlatformSupport,
+  onQrSessionOutput,
+  onQrSessionUpdate,
+  onQrSessionEnded,
+  type QrSessionUpdate,
   type PlatformTemplate,
   type ChannelBot,
+  type AgentMeta,
 } from "../../lib/hermes-bridge";
+
+const QR_PLATFORMS: Set<string> = new Set(["whatsapp", "weixin"]);
 
 const PLATFORM_ICONS: Record<string, string> = {
   feishu: "/icons/channels/feishu.png",
@@ -31,6 +47,16 @@ const PLATFORM_ICONS: Record<string, string> = {
   popo: "/icons/channels/popo.png",
   nim: "/icons/channels/nim.png",
   netease_bee: "/icons/channels/netease-bee.png",
+  discord: "/icons/channels/discord.png",
+  telegram: "/icons/channels/telegram.png",
+  slack: "/icons/channels/slack.png",
+  whatsapp: "/icons/channels/whatsapp.png",
+  signal: "/icons/channels/signal.png",
+  email: "/icons/channels/email.png",
+  matrix: "/icons/channels/matrix.png",
+  mattermost: "/icons/channels/mattermost.png",
+  homeassistant: "/icons/channels/homeassistant.png",
+  bluebubbles: "/icons/channels/bluebubbles.png",
 };
 
 function PlatformIcon({ platformId, size = 20 }: { platformId: string; size?: number }) {
@@ -44,11 +70,13 @@ function PlatformIcon({ platformId, size = 20 }: { platformId: string; size?: nu
 export default function ChannelsView() {
   const [platforms, setPlatforms] = useState<PlatformTemplate[]>([]);
   const [bots, setBots] = useState<ChannelBot[]>([]);
+  const [agents, setAgents] = useState<AgentMeta[]>([]);
   const [showPicker, setShowPicker] = useState(false);
   const [editingBot, setEditingBot] = useState<{
     mode: "add" | "edit";
     platform: PlatformTemplate;
     botId?: string;
+    agentId: string;
   } | null>(null);
 
   const [formName, setFormName] = useState("");
@@ -59,9 +87,10 @@ export default function ChannelsView() {
   const [removing, setRemoving] = useState<string | null>(null);
 
   const loadData = async () => {
-    const [p, b] = await Promise.all([getPlatformTemplates(), listChannelBots()]);
+    const [p, b, a] = await Promise.all([getPlatformTemplates(), listChannelBots(), listAgents()]);
     setPlatforms(p);
     setBots(b);
+    setAgents(a);
   };
 
   useEffect(() => {
@@ -70,9 +99,9 @@ export default function ChannelsView() {
 
   const handlePickPlatform = (platform: PlatformTemplate) => {
     setShowPicker(false);
-    setEditingBot({ mode: "add", platform });
+    setEditingBot({ mode: "add", platform, agentId: "default" });
     setFormName("");
-    setFormData({});
+    setFormData({ GATEWAY_ALLOW_ALL_USERS: "true" });
     setShowSecrets(false);
     setSaveMsg(null);
   };
@@ -80,7 +109,7 @@ export default function ChannelsView() {
   const handleEditBot = (bot: ChannelBot) => {
     const platform = platforms.find((p) => p.id === bot.platform_id);
     if (!platform) return;
-    setEditingBot({ mode: "edit", platform, botId: bot.id });
+    setEditingBot({ mode: "edit", platform, botId: bot.id, agentId: bot.agent_id || "default" });
     setFormName(bot.name);
     setFormData({ ...bot.config });
     setShowSecrets(false);
@@ -89,7 +118,7 @@ export default function ChannelsView() {
 
   const handleSave = async () => {
     if (!editingBot) return;
-    const { platform, mode, botId } = editingBot;
+    const { platform, mode, botId, agentId } = editingBot;
 
     if (!formName.trim()) {
       setSaveMsg({ ok: false, text: "请输入 Bot 名称" });
@@ -108,9 +137,9 @@ export default function ChannelsView() {
     setSaveMsg(null);
     try {
       if (mode === "add") {
-        await addChannelBot(formName.trim(), platform.id, formData);
+        await addChannelBot(formName.trim(), platform.id, formData, agentId);
       } else if (botId) {
-        await updateChannelBot(botId, formName.trim(), formData);
+        await updateChannelBot(botId, formName.trim(), formData, agentId);
       }
       setSaveMsg({ ok: true, text: "保存成功！" });
       await loadData();
@@ -197,7 +226,11 @@ export default function ChannelsView() {
                               {bot.name}
                             </h3>
                             <p className="text-xs text-zinc-500 mt-0.5">
-                              {Object.keys(bot.config).length} 项配置
+                              {agents.find((a) => a.id === bot.agent_id)
+                                ? `${agents.find((a) => a.id === bot.agent_id)!.avatar} ${agents.find((a) => a.id === bot.agent_id)!.name}`
+                                : "默认 Agent"}
+                              {" · "}
+                              {Object.keys(bot.config).filter((k) => k !== "GATEWAY_ALLOW_ALL_USERS").length} 项配置
                             </p>
                           </div>
                           <div className="flex items-center gap-2">
@@ -296,134 +329,537 @@ export default function ChannelsView() {
 
         {/* Add/Edit Bot Modal */}
         {editingBot && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-            <div className="bg-surface-0 border border-zinc-800 rounded-2xl shadow-2xl w-full max-w-lg mx-4 max-h-[85vh] flex flex-col">
-              <div className="flex items-center justify-between p-5 border-b border-zinc-800 shrink-0">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-surface-1 flex items-center justify-center">
-                    <PlatformIcon platformId={editingBot.platform.id} size={18} />
+          <BotEditModal
+            editingBot={editingBot}
+            setEditingBot={setEditingBot}
+            agents={agents}
+            formName={formName}
+            setFormName={setFormName}
+            formData={formData}
+            setFormData={setFormData}
+            showSecrets={showSecrets}
+            setShowSecrets={setShowSecrets}
+            saving={saving}
+            saveMsg={saveMsg}
+            onSave={handleSave}
+            onClose={() => setEditingBot(null)}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BotEditModal({
+  editingBot,
+  setEditingBot,
+  agents,
+  formName,
+  setFormName,
+  formData,
+  setFormData,
+  showSecrets,
+  setShowSecrets,
+  saving,
+  saveMsg,
+  onSave,
+  onClose,
+}: {
+  editingBot: {
+    mode: "add" | "edit";
+    platform: PlatformTemplate;
+    botId?: string;
+    agentId: string;
+  };
+  setEditingBot: React.Dispatch<React.SetStateAction<{
+    mode: "add" | "edit";
+    platform: PlatformTemplate;
+    botId?: string;
+    agentId: string;
+  } | null>>;
+  agents: AgentMeta[];
+  formName: string;
+  setFormName: (v: string) => void;
+  formData: Record<string, string>;
+  setFormData: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  showSecrets: boolean;
+  setShowSecrets: (v: boolean) => void;
+  saving: boolean;
+  saveMsg: { ok: boolean; text: string } | null;
+  onSave: () => void;
+  onClose: () => void;
+}) {
+  const isQr =
+    QR_PLATFORMS.has(editingBot.platform.id) && editingBot.mode === "add";
+  const [useQrMode, setUseQrMode] = useState(isQr);
+  const [qrSupported, setQrSupported] = useState<boolean | null>(null);
+
+  const [sessionActive, setSessionActive] = useState(false);
+  const [sessionOutput, setSessionOutput] = useState<string[]>([]);
+  const [qrImageUrl, setQrImageUrl] = useState<string | null>(null);
+  const [paired, setPaired] = useState(false);
+  const [pairMsg, setPairMsg] = useState("");
+  const outputRef = useRef<HTMLPreElement>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (isQr) {
+      checkQrPlatformSupport(editingBot.platform.id)
+        .then(setQrSupported)
+        .catch(() => setQrSupported(false));
+    }
+  }, [isQr, editingBot.platform.id]);
+
+  useEffect(() => {
+    if (!sessionActive) return;
+
+    let unOutput: (() => void) | null = null;
+    let unUpdate: (() => void) | null = null;
+    let unEnded: (() => void) | null = null;
+
+    onQrSessionOutput((data) => {
+      setSessionOutput((prev) => [...prev, data]);
+    }).then((fn) => {
+      unOutput = fn;
+    });
+
+    onQrSessionUpdate((update: QrSessionUpdate) => {
+      if (update.stage === "qr_ready" && update.qr_url) {
+        setQrImageUrl(update.qr_url);
+      } else if (update.stage === "paired" && update.credentials) {
+        setPaired(true);
+        setPairMsg(update.message);
+        setFormData((prev) => ({ ...prev, ...update.credentials! }));
+        setSessionActive(false);
+      } else if (update.stage === "failed") {
+        setPairMsg(update.message);
+        setSessionActive(false);
+      }
+    }).then((fn) => {
+      unUpdate = fn;
+    });
+
+    onQrSessionEnded(() => {
+      setSessionActive(false);
+    }).then((fn) => {
+      unEnded = fn;
+    });
+
+    if (editingBot.platform.id === "whatsapp") {
+      pollRef.current = setInterval(async () => {
+        try {
+          const result = await detectQrCredentials(editingBot.platform.id);
+          if (result.found) {
+            setPaired(true);
+            setPairMsg(result.message);
+            setFormData((prev) => ({ ...prev, ...result.credentials }));
+            if (pollRef.current) clearInterval(pollRef.current);
+            await stopQrSession();
+            setSessionActive(false);
+          }
+        } catch {
+          /* ignore */
+        }
+      }, 3000);
+    }
+
+    return () => {
+      unOutput?.();
+      unUpdate?.();
+      unEnded?.();
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [sessionActive, editingBot.platform.id]);
+
+  useEffect(() => {
+    if (outputRef.current) {
+      outputRef.current.scrollTop = outputRef.current.scrollHeight;
+    }
+  }, [sessionOutput]);
+
+  const handleStartSession = async () => {
+    setSessionOutput([]);
+    setQrImageUrl(null);
+    setPaired(false);
+    setPairMsg("");
+    try {
+      await startQrSession(editingBot.platform.id);
+      setSessionActive(true);
+    } catch (err) {
+      setSessionOutput([`启动失败: ${err}`]);
+    }
+  };
+
+  const handleStopSession = async () => {
+    await stopQrSession();
+    setSessionActive(false);
+    if (pollRef.current) clearInterval(pollRef.current);
+  };
+
+  const handleClose = () => {
+    if (sessionActive) {
+      stopQrSession().catch(() => {});
+    }
+    if (pollRef.current) clearInterval(pollRef.current);
+    onClose();
+  };
+
+  const isWeixin = editingBot.platform.id === "weixin";
+  const weixinUnsupported = isWeixin && qrSupported === false;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="bg-surface-0 border border-zinc-800 rounded-2xl shadow-2xl w-full max-w-lg mx-4 max-h-[85vh] flex flex-col">
+        <div className="flex items-center justify-between p-5 border-b border-zinc-800 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-surface-1 flex items-center justify-center">
+              <PlatformIcon platformId={editingBot.platform.id} size={18} />
+            </div>
+            <h2 className="text-lg font-semibold text-zinc-100">
+              {editingBot.mode === "add" ? "添加" : "编辑"}{" "}
+              {editingBot.platform.name} Bot
+            </h2>
+          </div>
+          <div className="flex items-center gap-2">
+            {isQr && (
+              <button
+                onClick={() => {
+                  if (sessionActive) handleStopSession();
+                  setUseQrMode(!useQrMode);
+                  setSessionOutput([]);
+                  setPaired(false);
+                }}
+                className="text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors px-2 py-1 rounded-md hover:bg-surface-2"
+              >
+                {useQrMode ? "手动填写" : "扫码连接"}
+              </button>
+            )}
+            <button
+              onClick={handleClose}
+              className="p-1.5 text-zinc-500 hover:text-zinc-300 rounded-lg hover:bg-surface-2"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        <div className="p-5 space-y-4 overflow-y-auto flex-1">
+          {useQrMode ? (
+            <>
+              {weixinUnsupported && (
+                <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-3">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                    <p className="text-xs text-amber-300">
+                      微信适配器可能需要更新 Hermes 到最新版。
+                    </p>
                   </div>
-                  <h2 className="text-lg font-semibold text-zinc-100">
-                    {editingBot.mode === "add" ? "添加" : "编辑"} {editingBot.platform.name} Bot
-                  </h2>
                 </div>
-                <button
-                  onClick={() => setEditingBot(null)}
-                  className="p-1.5 text-zinc-500 hover:text-zinc-300 rounded-lg hover:bg-surface-2"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
+              )}
 
-              <div className="p-5 space-y-4 overflow-y-auto flex-1">
-                {/* Bot Name */}
-                <div>
-                  <label className="flex items-center gap-1 text-xs text-zinc-400 mb-1.5">
-                    Bot 名称 <span className="text-red-400">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={formName}
-                    onChange={(e) => setFormName(e.target.value)}
-                    placeholder="例如：客服机器人、内部助手"
-                    className="w-full bg-surface-1 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-hermes-500/50"
-                  />
-                </div>
-
-                {/* Setup Guide */}
-                <div className="bg-surface-1 rounded-lg p-3">
-                  <p className="text-xs text-zinc-400 whitespace-pre-line leading-relaxed">
-                    {editingBot.platform.setup_guide}
+              {!sessionActive && !paired && (
+                <div className="text-center py-8">
+                  <div className="w-16 h-16 rounded-2xl bg-surface-1 flex items-center justify-center mx-auto mb-4">
+                    <QrCode className="w-8 h-8 text-hermes-400" />
+                  </div>
+                  <p className="text-sm text-zinc-300 mb-1">
+                    扫码连接{" "}
+                    {editingBot.platform.name}
                   </p>
-                  {editingBot.platform.setup_url && (
-                    <a
-                      href={editingBot.platform.setup_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 text-xs text-hermes-400 hover:text-hermes-300 mt-2"
+                  <p className="text-xs text-zinc-500 mb-5">
+                    {editingBot.platform.id === "whatsapp"
+                      ? "点击下方按钮，将在此窗口内显示 QR 码，用 WhatsApp 扫描即可"
+                      : "点击下方按钮，将在此窗口内显示 QR 码，用微信扫描即可"}
+                  </p>
+                  <button
+                    onClick={handleStartSession}
+                    className="inline-flex items-center gap-2 bg-hermes-600 hover:bg-hermes-500 text-white px-6 py-2.5 rounded-xl text-sm font-medium transition-colors"
+                  >
+                    <QrCode className="w-4 h-4" />
+                    获取二维码
+                  </button>
+                </div>
+              )}
+
+              {sessionActive && !paired && (
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      <span className="text-xs text-zinc-400">
+                        {qrImageUrl ? "请扫描二维码" : "正在获取二维码..."}
+                      </span>
+                    </div>
+                    <button
+                      onClick={handleStopSession}
+                      className="text-[11px] text-zinc-500 hover:text-red-400 transition-colors"
                     >
-                      前往开放平台 <ExternalLink className="w-3 h-3" />
-                    </a>
+                      取消
+                    </button>
+                  </div>
+
+                  {qrImageUrl ? (
+                    <div className="flex flex-col items-center py-2">
+                      <div className="bg-white p-4 rounded-2xl">
+                        <QRCodeSVG
+                          value={qrImageUrl}
+                          size={224}
+                          level="M"
+                          includeMargin={false}
+                        />
+                      </div>
+                      <p className="text-xs text-zinc-400 mt-3">
+                        {editingBot.platform.id === "whatsapp"
+                          ? "打开 WhatsApp → 设置 → 已关联的设备 → 关联设备 → 扫码"
+                          : "打开微信 → 扫一扫 → 扫描上方二维码"}
+                      </p>
+                    </div>
+                  ) : sessionOutput.length > 0 ? (
+                    <pre
+                      ref={outputRef}
+                      className="bg-black rounded-xl p-4 text-[11px] text-green-400 overflow-auto max-h-[320px] whitespace-pre select-all"
+                      style={{
+                        fontFamily:
+                          "'SF Mono', 'Monaco', 'Cascadia Code', 'Menlo', monospace",
+                        lineHeight: "1.1",
+                        letterSpacing: "0px",
+                      }}
+                    >
+                      {sessionOutput.join("")}
+                    </pre>
+                  ) : (
+                    <div className="flex justify-center py-10">
+                      <Loader2 className="w-8 h-8 text-hermes-400 animate-spin" />
+                    </div>
                   )}
                 </div>
+              )}
 
-                {/* Config Fields */}
-                {editingBot.platform.fields.map((field) => (
-                  <div key={field.key}>
+              {paired && (
+                <div className="text-center py-6">
+                  <div className="w-16 h-16 rounded-full bg-emerald-500/10 flex items-center justify-center mx-auto mb-4">
+                    <Check className="w-8 h-8 text-emerald-400" />
+                  </div>
+                  <p className="text-sm text-emerald-300 font-medium mb-1">
+                    {pairMsg || "配对成功！"}
+                  </p>
+                  <p className="text-xs text-zinc-500">
+                    凭证已自动填入，输入 Bot 名称后保存即可
+                  </p>
+                </div>
+              )}
+
+              {paired && (
+                <>
+                  <div>
                     <label className="flex items-center gap-1 text-xs text-zinc-400 mb-1.5">
-                      {field.label}
-                      {field.required && <span className="text-red-400">*</span>}
+                      Bot 名称 <span className="text-red-400">*</span>
                     </label>
-                    <div className="relative">
-                      <input
-                        type={field.secret && !showSecrets ? "password" : "text"}
-                        value={formData[field.key] || ""}
-                        onChange={(e) =>
-                          setFormData((prev) => ({
-                            ...prev,
-                            [field.key]: e.target.value,
-                          }))
-                        }
-                        placeholder={field.placeholder || field.help}
-                        className="w-full bg-surface-1 border border-zinc-700 rounded-lg px-3 py-2 pr-10 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-hermes-500/50"
-                      />
-                      {field.secret && (
-                        <button
-                          onClick={() => setShowSecrets(!showSecrets)}
-                          className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
-                        >
-                          {showSecrets ? (
-                            <EyeOff className="w-3.5 h-3.5" />
-                          ) : (
-                            <Eye className="w-3.5 h-3.5" />
-                          )}
-                        </button>
-                      )}
-                    </div>
-                    {field.help && (
-                      <p className="text-[11px] text-zinc-600 mt-1">{field.help}</p>
-                    )}
+                    <input
+                      type="text"
+                      value={formName}
+                      onChange={(e) => setFormName(e.target.value)}
+                      placeholder={`例如：我的 ${editingBot.platform.name} Bot`}
+                      className="w-full bg-surface-1 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-hermes-500/50"
+                    />
                   </div>
-                ))}
+                  <div>
+                    <label className="flex items-center gap-1 text-xs text-zinc-400 mb-1.5">
+                      绑定 Agent <span className="text-red-400">*</span>
+                    </label>
+                    <select
+                      value={editingBot.agentId}
+                      onChange={(e) =>
+                        setEditingBot((prev) =>
+                          prev ? { ...prev, agentId: e.target.value } : prev
+                        )
+                      }
+                      className="w-full bg-surface-1 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-hermes-500/50"
+                    >
+                      {agents.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.avatar} {a.name} ({a.id})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </>
+              )}
 
-                {/* Save Message */}
-                {saveMsg && (
-                  <div
-                    className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${
-                      saveMsg.ok
-                        ? "text-emerald-400 bg-emerald-500/10"
-                        : "text-red-400 bg-red-500/10"
-                    }`}
+              {saveMsg && (
+                <div
+                  className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${
+                    saveMsg.ok
+                      ? "text-emerald-400 bg-emerald-500/10"
+                      : "text-red-400 bg-red-500/10"
+                  }`}
+                >
+                  {saveMsg.ok && <CheckCircle2 className="w-3.5 h-3.5" />}
+                  {saveMsg.text}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <div>
+                <label className="flex items-center gap-1 text-xs text-zinc-400 mb-1.5">
+                  Bot 名称 <span className="text-red-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={formName}
+                  onChange={(e) => setFormName(e.target.value)}
+                  placeholder="例如：客服机器人、内部助手"
+                  className="w-full bg-surface-1 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-hermes-500/50"
+                />
+              </div>
+
+              <div>
+                <label className="flex items-center gap-1 text-xs text-zinc-400 mb-1.5">
+                  绑定 Agent <span className="text-red-400">*</span>
+                </label>
+                <select
+                  value={editingBot.agentId}
+                  onChange={(e) =>
+                    setEditingBot((prev) =>
+                      prev ? { ...prev, agentId: e.target.value } : prev
+                    )
+                  }
+                  className="w-full bg-surface-1 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-hermes-500/50"
+                >
+                  {agents.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.avatar} {a.name} ({a.id})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-zinc-600 mt-1">
+                  渠道消息将由选定的 Agent 处理
+                </p>
+              </div>
+
+              <div className="bg-surface-1 rounded-lg p-3">
+                <p className="text-xs text-zinc-400 whitespace-pre-line leading-relaxed">
+                  {editingBot.platform.setup_guide}
+                </p>
+                {editingBot.platform.setup_url && (
+                  <a
+                    href={editingBot.platform.setup_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-xs text-hermes-400 hover:text-hermes-300 mt-2"
                   >
-                    {saveMsg.ok && <CheckCircle2 className="w-3.5 h-3.5" />}
-                    {saveMsg.text}
-                  </div>
+                    前往开放平台 <ExternalLink className="w-3 h-3" />
+                  </a>
                 )}
               </div>
 
-              <div className="p-5 border-t border-zinc-800 flex justify-end gap-2 shrink-0">
-                <button
-                  onClick={() => setEditingBot(null)}
-                  className="px-4 py-2 rounded-lg text-sm text-zinc-400 hover:text-zinc-200 hover:bg-surface-2 transition-colors"
-                >
-                  取消
-                </button>
-                <button
-                  onClick={handleSave}
-                  disabled={saving}
-                  className="inline-flex items-center gap-2 bg-hermes-600 hover:bg-hermes-500 disabled:opacity-40 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-                >
-                  {saving ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Save className="w-4 h-4" />
+              {editingBot.platform.fields.map((field) => (
+                <div key={field.key}>
+                  <label className="flex items-center gap-1 text-xs text-zinc-400 mb-1.5">
+                    {field.label}
+                    {field.required && (
+                      <span className="text-red-400">*</span>
+                    )}
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={field.secret && !showSecrets ? "password" : "text"}
+                      value={formData[field.key] || ""}
+                      onChange={(e) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          [field.key]: e.target.value,
+                        }))
+                      }
+                      placeholder={field.placeholder || field.help}
+                      className="w-full bg-surface-1 border border-zinc-700 rounded-lg px-3 py-2 pr-10 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-hermes-500/50"
+                    />
+                    {field.secret && (
+                      <button
+                        onClick={() => setShowSecrets(!showSecrets)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
+                      >
+                        {showSecrets ? (
+                          <EyeOff className="w-3.5 h-3.5" />
+                        ) : (
+                          <Eye className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                    )}
+                  </div>
+                  {field.help && (
+                    <p className="text-[11px] text-zinc-600 mt-1">
+                      {field.help}
+                    </p>
                   )}
-                  保存
-                </button>
+                </div>
+              ))}
+
+              <div className="pt-2 border-t border-zinc-800">
+                <label className="flex items-center justify-between cursor-pointer group">
+                  <div>
+                    <span className="text-sm text-zinc-200">允许所有用户</span>
+                    <p className="text-[11px] text-zinc-500 mt-0.5">
+                      开启后任何人都可以直接与 Bot 对话，无需配对码审批
+                    </p>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="checkbox"
+                      className="sr-only peer"
+                      checked={formData["GATEWAY_ALLOW_ALL_USERS"] === "true"}
+                      onChange={(e) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          GATEWAY_ALLOW_ALL_USERS: e.target.checked ? "true" : "false",
+                        }))
+                      }
+                    />
+                    <div className="w-9 h-5 bg-zinc-700 peer-checked:bg-hermes-500 rounded-full transition-colors" />
+                    <div className="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-4" />
+                  </div>
+                </label>
               </div>
-            </div>
-          </div>
-        )}
+
+              {saveMsg && (
+                <div
+                  className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${
+                    saveMsg.ok
+                      ? "text-emerald-400 bg-emerald-500/10"
+                      : "text-red-400 bg-red-500/10"
+                  }`}
+                >
+                  {saveMsg.ok && <CheckCircle2 className="w-3.5 h-3.5" />}
+                  {saveMsg.text}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="p-5 border-t border-zinc-800 flex justify-end gap-2 shrink-0">
+          <button
+            onClick={handleClose}
+            className="px-4 py-2 rounded-lg text-sm text-zinc-400 hover:text-zinc-200 hover:bg-surface-2 transition-colors"
+          >
+            {paired ? "完成" : "取消"}
+          </button>
+          {(!useQrMode || paired) && (
+            <button
+              onClick={onSave}
+              disabled={saving}
+              className="inline-flex items-center gap-2 bg-hermes-600 hover:bg-hermes-500 disabled:opacity-40 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            >
+              {saving ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Save className="w-4 h-4" />
+              )}
+              保存
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

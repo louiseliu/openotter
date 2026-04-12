@@ -1,30 +1,50 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   Plus,
   Play,
   Square,
   Trash2,
   Settings,
+  Loader2,
 } from "lucide-react";
 import { useAppStore } from "../../stores/appStore";
 import { useAgentStore } from "../../stores/agentStore";
 
 export default function AgentsListView() {
   const { setView, navigateToAgent } = useAppStore();
-  const { agents, gatewayStatuses, refresh, startGateway, stopGateway, removeAgent } =
-    useAgentStore();
+  const agents = useAgentStore((s) => s.agents);
+  const gatewayStatuses = useAgentStore((s) => s.gatewayStatuses);
+  const refresh = useAgentStore((s) => s.refresh);
+  const startGateway = useAgentStore((s) => s.startGateway);
+  const stopGateway = useAgentStore((s) => s.stopGateway);
+  const removeAgent = useAgentStore((s) => s.removeAgent);
+  const [statusLoading, setStatusLoading] = useState(true);
 
   useEffect(() => {
-    refresh();
+    let cancelled = false;
+    setStatusLoading(true);
+    refresh().finally(() => {
+      if (!cancelled) setStatusLoading(false);
+    });
+    return () => { cancelled = true; };
   }, [refresh]);
 
   const platformLabels: Record<string, string> = {
     feishu: "飞书",
     dingtalk: "钉钉",
     wecom: "企微",
+    weixin: "微信",
     telegram: "Telegram",
     discord: "Discord",
     slack: "Slack",
+    whatsapp: "WhatsApp",
+    signal: "Signal",
+    sms: "SMS",
+    email: "邮件",
+    mattermost: "Mattermost",
+    matrix: "Matrix",
+    homeassistant: "Home Assistant",
+    bluebubbles: "iMessage",
   };
 
   return (
@@ -58,13 +78,17 @@ export default function AgentsListView() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <h3 className="font-medium text-zinc-100">{agent.name}</h3>
-                    <div
-                      className={`w-2 h-2 rounded-full ${
-                        isRunning ? "bg-emerald-500 animate-pulse" : "bg-zinc-600"
-                      }`}
-                    />
+                    {statusLoading ? (
+                      <Loader2 className="w-3 h-3 text-zinc-500 animate-spin" />
+                    ) : (
+                      <div
+                        className={`w-2 h-2 rounded-full ${
+                          isRunning ? "bg-emerald-500 animate-pulse" : "bg-zinc-600"
+                        }`}
+                      />
+                    )}
                     <span className="text-xs text-zinc-500">
-                      {isRunning ? "运行中" : "已停止"}
+                      {statusLoading ? "检查中…" : isRunning ? "运行中" : "已停止"}
                     </span>
                   </div>
                   <div className="flex items-center gap-2 mt-1">
