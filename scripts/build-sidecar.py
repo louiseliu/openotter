@@ -43,7 +43,7 @@ def get_venv_python() -> Path:
     return HERMES_VENV / "bin" / "python"
 
 
-def build_pyinstaller(onefile: bool = False):
+def build_pyinstaller(onefile: bool = False, target_triple_override: str = None):
     venv_python = get_venv_python()
     if not venv_python.exists():
         print(f"Error: hermes-agent venv not found at {HERMES_VENV}")
@@ -67,7 +67,7 @@ def build_pyinstaller(onefile: bool = False):
         check=True,
     )
 
-    target_triple = get_target_triple()
+    target_triple = target_triple_override or get_target_triple()
     ext = ".exe" if sys.platform == "win32" else ""
     src_name = f"hermes-sidecar{ext}"
 
@@ -191,9 +191,14 @@ exec "$HERMES_VENV/bin/python" -u "$@"
 if __name__ == "__main__":
     args = sys.argv[1:]
 
+    target_triple_override = None
+    for i, arg in enumerate(args):
+        if arg == "--target-triple" and i + 1 < len(args):
+            target_triple_override = args[i + 1]
+
     if "--dev" in args:
         build_dev_wrapper()
     elif "--onefile" in args:
-        build_pyinstaller(onefile=True)
+        build_pyinstaller(onefile=True, target_triple_override=target_triple_override)
     else:
-        build_pyinstaller(onefile=False)
+        build_pyinstaller(onefile=False, target_triple_override=target_triple_override)

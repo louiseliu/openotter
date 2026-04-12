@@ -23,7 +23,7 @@ jobs:
             args: "--target aarch64-apple-darwin"
             label: macOS-ARM64
             rust_targets: "aarch64-apple-darwin,x86_64-apple-darwin"
-          - platform: macos-latest
+          - platform: macos-13
             args: "--target x86_64-apple-darwin"
             label: macOS-Intel
             rust_targets: "aarch64-apple-darwin,x86_64-apple-darwin"
@@ -95,14 +95,14 @@ jobs:
           python -m venv "$HERMES_DIR/venv"
 
           if [[ "$RUNNER_OS" == "Windows" ]]; then
-            VENV_PIP="$HERMES_DIR/venv/Scripts/pip"
+            VENV_PYTHON="$HERMES_DIR/venv/Scripts/python"
           else
-            VENV_PIP="$HERMES_DIR/venv/bin/pip"
+            VENV_PYTHON="$HERMES_DIR/venv/bin/python"
           fi
 
-          "$VENV_PIP" install --upgrade pip
-          "$VENV_PIP" install -e "$HERMES_DIR"
-          "$VENV_PIP" install pyinstaller
+          "$VENV_PYTHON" -m pip install --upgrade pip
+          "$VENV_PYTHON" -m pip install -e "$HERMES_DIR"
+          "$VENV_PYTHON" -m pip install pyinstaller
 
       - name: Build sidecar binary
         shell: bash
@@ -116,7 +116,6 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # macOS code signing (optional, set secrets in repo settings)
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
