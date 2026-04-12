@@ -22,11 +22,7 @@ jobs:
           - platform: macos-latest
             args: "--target aarch64-apple-darwin"
             label: macOS-ARM64
-            rust_targets: "aarch64-apple-darwin,x86_64-apple-darwin"
-          - platform: macos-13
-            args: "--target x86_64-apple-darwin"
-            label: macOS-Intel
-            rust_targets: "aarch64-apple-darwin,x86_64-apple-darwin"
+            rust_targets: "aarch64-apple-darwin"
           - platform: ubuntu-22.04
             args: ""
             label: Linux-x64
@@ -136,9 +132,10 @@ jobs:
             | Platform | File |
             |----------|------|
             | macOS (Apple Silicon) | `.dmg` |
-            | macOS (Intel) | `.dmg` |
             | Windows | `.msi` / `.nsis` |
             | Linux | `.deb` / `.AppImage` |
+
+            > macOS Intel users can run the Apple Silicon version via Rosetta 2.
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
