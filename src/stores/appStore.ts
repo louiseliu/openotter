@@ -18,7 +18,11 @@ export type View =
   | "mcp"
   | "toolset"
   | "models"
-  | "credentials";
+  | "credentials"
+  | "logs"
+  | "plugins"
+  | "profiles"
+  | "env";
 
 export interface AppStatus {
   install_status: "NotInstalled" | "NeedsSetup" | { Broken: string } | "Ready";

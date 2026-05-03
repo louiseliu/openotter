@@ -35,9 +35,16 @@ import {
   getSkillContent,
   validateLocalSkill,
   installLocalSkill,
-  type SkillInfo,
+  type SkillInfo as BridgeSkillInfo,
   type SkillValidation,
 } from "../../lib/hermes-bridge";
+import * as hermesApi from "../../lib/hermes-api";
+import type { SkillInfo as ApiSkillInfo } from "../../lib/hermes-api";
+
+interface SkillInfo extends BridgeSkillInfo {
+  enabled?: boolean;
+  description?: string;
+}
 
 type TabId = "installed" | "marketplace" | "recommended";
 
@@ -214,12 +221,18 @@ function SkillCard({
   onToggle,
   content,
   loadingContent,
+  showEnabledToggle,
+  onToggleEnabled,
+  toggling,
 }: {
   skill: SkillInfo;
   expanded: boolean;
   onToggle: () => void;
   content: string | undefined;
   loadingContent: boolean;
+  showEnabledToggle?: boolean;
+  onToggleEnabled?: (name: string, enabled: boolean) => void;
+  toggling?: boolean;
 }) {
   const badge = getSourceConfig(skill.source);
   const gradientCls = getCategoryGradient(skill.category);
@@ -268,8 +281,33 @@ function SkillCard({
                   {skill.category}
                 </span>
               )}
+              {showEnabledToggle && skill.enabled === false && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-zinc-800 text-zinc-500 ring-1 ring-inset ring-zinc-700/50">
+                  已禁用
+                </span>
+              )}
             </div>
           </div>
+
+          {showEnabledToggle && onToggleEnabled && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleEnabled(skill.name, skill.enabled ?? true);
+              }}
+              disabled={toggling}
+              className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${
+                skill.enabled !== false ? "bg-hermes-600" : "bg-zinc-700"
+              } ${toggling ? "opacity-50" : ""}`}
+              title={skill.enabled !== false ? "点击禁用" : "点击启用"}
+            >
+              <span
+                className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                  skill.enabled !== false ? "left-[18px]" : "left-0.5"
+                }`}
+              />
+            </button>
+          )}
         </div>
 
         {/* Preview or path */}
@@ -759,14 +797,37 @@ export default function SkillsView() {
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("installed");
   const [showInstallDialog, setShowInstallDialog] = useState(false);
+  const [useRestApi, setUseRestApi] = useState(false);
+  const [togglingSkill, setTogglingSkill] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await listSkills();
-      setSkills(list);
+      const webInfo = await hermesApi.initWebServer().catch(() => null);
+      if (webInfo?.running) {
+        const apiSkills = await hermesApi.getSkills();
+        const merged: SkillInfo[] = apiSkills.map((s: ApiSkillInfo) => ({
+          name: s.name,
+          category: s.category,
+          source: "builtin",
+          path: null,
+          enabled: s.enabled,
+          description: s.description,
+        }));
+        setSkills(merged);
+        setUseRestApi(true);
+      } else {
+        const list = await listSkills();
+        setSkills(list);
+        setUseRestApi(false);
+      }
     } catch (err) {
       console.error("Failed to load skills:", err);
+      try {
+        const list = await listSkills();
+        setSkills(list);
+        setUseRestApi(false);
+      } catch { /* fallthrough */ }
     } finally {
       setLoading(false);
     }
@@ -799,6 +860,26 @@ export default function SkillsView() {
       }
     },
     [expandedSkill, skillContent]
+  );
+
+  const handleToggleEnabled = useCallback(
+    async (name: string, currentEnabled: boolean) => {
+      if (!useRestApi) return;
+      setTogglingSkill(name);
+      try {
+        await hermesApi.toggleSkill(name, !currentEnabled);
+        setSkills((prev) =>
+          prev.map((s) =>
+            s.name === name ? { ...s, enabled: !currentEnabled } : s
+          )
+        );
+      } catch (err) {
+        console.error("Failed to toggle skill:", err);
+      } finally {
+        setTogglingSkill(null);
+      }
+    },
+    [useRestApi]
   );
 
   const categories = useMemo(() => {
@@ -1037,6 +1118,9 @@ export default function SkillsView() {
                           onToggle={() => handleToggle(skill.name)}
                           content={skillContent[skill.name]}
                           loadingContent={loadingContent === skill.name}
+                          showEnabledToggle={useRestApi}
+                          onToggleEnabled={handleToggleEnabled}
+                          toggling={togglingSkill === skill.name}
                         />
                       ))}
                     </div>
@@ -1061,6 +1145,9 @@ export default function SkillsView() {
                           onToggle={() => handleToggle(skill.name)}
                           content={skillContent[skill.name]}
                           loadingContent={loadingContent === skill.name}
+                          showEnabledToggle={useRestApi}
+                          onToggleEnabled={handleToggleEnabled}
+                          toggling={togglingSkill === skill.name}
                         />
                       ))}
                     </div>

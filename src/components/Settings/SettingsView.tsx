@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Server,
   Key,
@@ -19,7 +19,14 @@ import {
   Download,
   Globe,
   Package,
+  Palette,
+  FileCode,
+  Save,
+  RotateCcw,
+  Check,
 } from "lucide-react";
+import * as hermesApi from "../../lib/hermes-api";
+import type { DashboardThemesResponse } from "../../lib/hermes-api";
 import { useAppStore } from "../../stores/appStore";
 import {
   getAppStatus,
@@ -185,6 +192,102 @@ export default function SettingsView() {
   const [updating, setUpdating] = useState(false);
   const [updateProgress, setUpdateProgress] = useState<InstallProgress | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
+
+  const [themesData, setThemesData] = useState<DashboardThemesResponse | null>(null);
+  const [themesLoading, setThemesLoading] = useState(false);
+  const [themesError, setThemesError] = useState<string | null>(null);
+  const [settingTheme, setSettingTheme] = useState<string | null>(null);
+
+  const [yamlContent, setYamlContent] = useState("");
+  const [yamlDraft, setYamlDraft] = useState("");
+  const [yamlLoading, setYamlLoading] = useState(false);
+  const [yamlError, setYamlError] = useState<string | null>(null);
+  const [yamlSaving, setYamlSaving] = useState(false);
+  const [yamlSaveMsg, setYamlSaveMsg] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [yamlEditing, setYamlEditing] = useState(false);
+  const [webServerReady, setWebServerReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const init = async () => {
+      try {
+        await hermesApi.initWebServer();
+        if (!cancelled) setWebServerReady(true);
+      } catch (err) {
+        console.error("Web server not available for settings:", err);
+      }
+    };
+
+    init();
+    return () => { cancelled = true; };
+  }, []);
+
+  const loadThemes = useCallback(async () => {
+    setThemesLoading(true);
+    setThemesError(null);
+    try {
+      const data = await hermesApi.getThemes();
+      setThemesData(data);
+    } catch (err) {
+      console.error("Failed to load themes:", err);
+      setThemesError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setThemesLoading(false);
+    }
+  }, []);
+
+  const loadYamlConfig = useCallback(async () => {
+    setYamlLoading(true);
+    setYamlError(null);
+    try {
+      const data = await hermesApi.getConfigRaw();
+      const text = data.yaml ?? "";
+      setYamlContent(text);
+      setYamlDraft(text);
+    } catch (err) {
+      console.error("Failed to load YAML config:", err);
+      setYamlError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setYamlLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!webServerReady) return;
+    loadThemes();
+    loadYamlConfig();
+  }, [webServerReady, loadThemes, loadYamlConfig]);
+
+  const handleSetTheme = async (name: string) => {
+    setSettingTheme(name);
+    try {
+      await hermesApi.setTheme(name);
+      await loadThemes();
+    } catch (err) {
+      console.error("Failed to set theme:", err);
+    } finally {
+      setSettingTheme(null);
+    }
+  };
+
+  const handleYamlSave = async () => {
+    setYamlSaving(true);
+    setYamlSaveMsg(null);
+    try {
+      await hermesApi.saveConfigRaw(yamlDraft);
+      setYamlContent(yamlDraft);
+      setYamlEditing(false);
+      setYamlSaveMsg({ ok: true, msg: "配置已保存！Hermes 将重新加载配置。" });
+    } catch (err) {
+      setYamlSaveMsg({
+        ok: false,
+        msg: `保存失败: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      setYamlSaving(false);
+    }
+  };
 
   const handleStartSidecar = async () => {
     setStartingSidecar(true);
@@ -710,6 +813,158 @@ export default function SettingsView() {
           </section>
         )}
 
+        {/* Dashboard Theme */}
+        <section className="mb-8">
+          <h2 className="text-base font-semibold text-zinc-400 uppercase tracking-wider mb-4">
+            <Palette className="w-4 h-4 inline mr-1.5 -mt-0.5" />
+            Dashboard 主题
+          </h2>
+          {!webServerReady || themesLoading ? (
+            <div className="flex items-center justify-center py-8 bg-surface-1 border border-zinc-800 rounded-xl">
+              <Loader2 className="w-5 h-5 animate-spin text-zinc-500" />
+            </div>
+          ) : themesError ? (
+            <div className="text-center py-8 bg-surface-1 border border-zinc-800 rounded-xl">
+              <Palette className="w-6 h-6 text-zinc-600 mx-auto mb-2" />
+              <p className="text-sm text-zinc-500">加载主题失败</p>
+              <p className="text-xs text-zinc-600 mt-1">{themesError}</p>
+              <button onClick={loadThemes} className="text-xs text-hermes-400 hover:text-hermes-300 mt-2">
+                重试
+              </button>
+            </div>
+          ) : themesData ? (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {themesData.themes.map((t) => {
+                const isActive = t.name === themesData.active;
+                const isSetting = settingTheme === t.name;
+                return (
+                  <button
+                    key={t.name}
+                    onClick={() => !isActive && handleSetTheme(t.name)}
+                    disabled={isActive || isSetting}
+                    className={`relative bg-surface-1 border rounded-xl p-4 text-left transition-all ${
+                      isActive
+                        ? "border-hermes-500 ring-1 ring-hermes-500/30"
+                        : "border-zinc-800 hover:border-zinc-600"
+                    } disabled:cursor-default`}
+                  >
+                    {isActive && (
+                      <div className="absolute top-2 right-2">
+                        <Check className="w-4 h-4 text-hermes-400" />
+                      </div>
+                    )}
+                    {isSetting && (
+                      <div className="absolute top-2 right-2">
+                        <Loader2 className="w-4 h-4 animate-spin text-hermes-400" />
+                      </div>
+                    )}
+                    <p className="text-sm font-medium text-zinc-200 mb-0.5">
+                      {t.label}
+                    </p>
+                    <p className="text-xs text-zinc-500 line-clamp-2">
+                      {t.description}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-center py-8 bg-surface-1 border border-zinc-800 rounded-xl">
+              <Palette className="w-6 h-6 text-zinc-600 mx-auto mb-2" />
+              <p className="text-sm text-zinc-500">无法加载主题信息</p>
+            </div>
+          )}
+        </section>
+
+        {/* YAML Config Editor */}
+        <section className="mb-8">
+          <h2 className="text-base font-semibold text-zinc-400 uppercase tracking-wider mb-4">
+            <FileCode className="w-4 h-4 inline mr-1.5 -mt-0.5" />
+            原始 YAML 配置
+          </h2>
+          <div className="bg-surface-1 border border-zinc-800 rounded-xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
+              <p className="text-xs text-zinc-500">
+                直接编辑 Hermes 的 YAML 配置文件（适合高级用户）
+              </p>
+              <div className="flex items-center gap-2">
+                {yamlEditing ? (
+                  <>
+                    <button
+                      onClick={() => {
+                        setYamlDraft(yamlContent);
+                        setYamlEditing(false);
+                        setYamlSaveMsg(null);
+                      }}
+                      className="inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-300"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                      重置
+                    </button>
+                    <button
+                      onClick={handleYamlSave}
+                      disabled={yamlSaving || yamlDraft === yamlContent}
+                      className="inline-flex items-center gap-1 text-xs bg-hermes-600 hover:bg-hermes-500 disabled:opacity-40 text-white px-2.5 py-1 rounded-md transition-colors"
+                    >
+                      {yamlSaving ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <Save className="w-3 h-3" />
+                      )}
+                      保存
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => setYamlEditing(true)}
+                    className="text-xs text-hermes-400 hover:text-hermes-300"
+                  >
+                    编辑
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {yamlSaveMsg && (
+              <div
+                className={`px-4 py-2 text-xs ${
+                  yamlSaveMsg.ok
+                    ? "text-emerald-400 bg-emerald-500/10"
+                    : "text-red-400 bg-red-500/10"
+                }`}
+              >
+                {yamlSaveMsg.msg}
+              </div>
+            )}
+
+            {!webServerReady || yamlLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-5 h-5 animate-spin text-zinc-500" />
+              </div>
+            ) : yamlError ? (
+              <div className="text-center py-12">
+                <FileCode className="w-6 h-6 text-zinc-600 mx-auto mb-2" />
+                <p className="text-sm text-zinc-500">加载 YAML 配置失败</p>
+                <p className="text-xs text-zinc-600 mt-1">{yamlError}</p>
+                <button onClick={loadYamlConfig} className="text-xs text-hermes-400 hover:text-hermes-300 mt-2">
+                  重试
+                </button>
+              </div>
+            ) : yamlEditing ? (
+              <textarea
+                value={yamlDraft}
+                onChange={(e) => setYamlDraft(e.target.value)}
+                spellCheck={false}
+                className="w-full min-h-[400px] bg-zinc-950 px-4 py-3 text-xs text-zinc-300 font-mono leading-relaxed focus:outline-none resize-none"
+              />
+            ) : (
+              <pre className="px-4 py-3 text-xs text-zinc-400 font-mono leading-relaxed max-h-[400px] overflow-y-auto whitespace-pre-wrap">
+                {yamlContent || "（空配置）"}
+              </pre>
+            )}
+          </div>
+        </section>
+
         {/* About */}
         <section>
           <h2 className="text-base font-semibold text-zinc-400 uppercase tracking-wider mb-4">
@@ -717,7 +972,7 @@ export default function SettingsView() {
           </h2>
           <div className="bg-surface-1 border border-zinc-800 rounded-xl p-5">
             <p className="text-sm text-zinc-300">
-              <strong>OpenOtter</strong> v0.1.0
+              <strong>OpenOtter</strong> v0.2.0
             </p>
             <p className="text-xs text-zinc-500 mt-1">
               Hermes Agent 桌面管理平台，让 AI Agent 触手可及。

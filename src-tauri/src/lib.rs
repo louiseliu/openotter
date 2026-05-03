@@ -8,6 +8,7 @@ mod hermes_installer;
 mod model_manager;
 mod session_search;
 mod sidecar;
+mod web_server;
 
 use commands::*;
 
@@ -24,6 +25,7 @@ pub fn run() {
         .setup(|app| {
             sidecar::init_sidecar_state(app);
             gateway_manager::init_gateway_state(app);
+            web_server::init_web_server_state(app);
             agent_manager::ensure_dirs();
             evolution_watcher::init_watcher(app);
             Ok(())
@@ -66,6 +68,10 @@ pub fn run() {
             // Sidecar
             start_hermes_sidecar,
             stop_hermes_sidecar,
+            // Web Server (Dashboard API)
+            start_web_server,
+            get_web_server_info,
+            stop_web_server,
             // Connectivity & Config
             test_provider_connectivity,
             test_saved_connectivity,

@@ -14,6 +14,9 @@ import {
   MessageSquare,
   Cpu,
   DollarSign,
+  TrendingUp,
+  Sparkles,
+  Phone,
 } from "lucide-react";
 import { useAppStore } from "../../stores/appStore";
 import { useAgentStore } from "../../stores/agentStore";
@@ -25,6 +28,8 @@ import {
   type CurrentConfig,
   type HermesInsights,
 } from "../../lib/hermes-bridge";
+import * as hermesApi from "../../lib/hermes-api";
+import type { AnalyticsResponse } from "../../lib/hermes-api";
 import SessionSearch from "../Sessions/SessionSearch";
 
 export default function DashboardView() {
@@ -41,6 +46,7 @@ export default function DashboardView() {
   const { agents, gatewayStatuses, refresh } = useAgentStore();
   const [currentConfig, setCurrentConfig] = useState<CurrentConfig | null>(null);
   const [insights, setInsights] = useState<HermesInsights | null>(null);
+  const [analytics, setAnalytics] = useState<AnalyticsResponse | null>(null);
 
   useEffect(() => {
     refresh();
@@ -48,6 +54,12 @@ export default function DashboardView() {
     const timer = setTimeout(() => {
       getHermesInsights(7).then(setInsights).catch(console.error);
     }, 500);
+    // Load enhanced analytics from web server
+    hermesApi.initWebServer().then((info) => {
+      if (info.running) {
+        hermesApi.getAnalytics(7).then(setAnalytics).catch(console.error);
+      }
+    }).catch(() => {});
     return () => clearTimeout(timer);
   }, [refresh]);
 
@@ -202,8 +214,135 @@ export default function DashboardView() {
           </div>
         )}
 
-        {/* Insights */}
-        {insights && (insights.sessions > 0 || insights.messages > 0) && (
+        {/* Analytics (Enhanced via REST API) */}
+        {analytics && analytics.totals.total_sessions > 0 ? (
+          <section className="mb-8">
+            <h2 className="text-base font-semibold text-zinc-400 uppercase tracking-wider mb-5">
+              近 7 天使用统计
+            </h2>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+              <MiniStat
+                icon={<MessageSquare className="w-4 h-4 text-blue-400" />}
+                label="会话"
+                value={String(analytics.totals.total_sessions)}
+              />
+              <MiniStat
+                icon={<Cpu className="w-4 h-4 text-purple-400" />}
+                label="输入 Tokens"
+                value={formatTokens(analytics.totals.total_input)}
+              />
+              <MiniStat
+                icon={<TrendingUp className="w-4 h-4 text-hermes-400" />}
+                label="输出 Tokens"
+                value={formatTokens(analytics.totals.total_output)}
+              />
+              <MiniStat
+                icon={<Phone className="w-4 h-4 text-cyan-400" />}
+                label="API 调用"
+                value={String(analytics.totals.total_api_calls ?? 0)}
+              />
+              <MiniStat
+                icon={<DollarSign className="w-4 h-4 text-emerald-400" />}
+                label="预估费用"
+                value={`$${analytics.totals.total_estimated_cost.toFixed(2)}`}
+              />
+            </div>
+
+            {/* Daily bar chart */}
+            {analytics.daily.length > 1 && (
+              <div className="bg-surface-1 border border-zinc-800 rounded-xl p-4 mb-4">
+                <p className="text-[10px] text-zinc-500 uppercase tracking-wider mb-3">
+                  每日 Token 用量
+                </p>
+                <div className="flex items-end gap-1 h-20">
+                  {analytics.daily.map((d) => {
+                    const total = d.input_tokens + d.output_tokens;
+                    const maxTokens = Math.max(
+                      ...analytics.daily.map((dd) => dd.input_tokens + dd.output_tokens),
+                      1
+                    );
+                    const heightPct = Math.max((total / maxTokens) * 100, 2);
+                    return (
+                      <div
+                        key={d.day}
+                        className="flex-1 flex flex-col items-center gap-1"
+                        title={`${d.day}: ${total.toLocaleString()} tokens`}
+                      >
+                        <div
+                          className="w-full bg-hermes-500/40 rounded-t-sm hover:bg-hermes-500/60 transition-colors"
+                          style={{ height: `${heightPct}%` }}
+                        />
+                        <span className="text-[9px] text-zinc-600">
+                          {d.day.slice(5)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {analytics.by_model.length > 0 && (
+              <div className="bg-surface-1 border border-zinc-800 rounded-xl p-3 mb-4">
+                <p className="text-[10px] text-zinc-500 uppercase tracking-wider mb-2">
+                  模型使用
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {analytics.by_model.map((m) => (
+                    <span
+                      key={m.model}
+                      className="text-xs px-2 py-1 bg-zinc-800 rounded-lg text-zinc-400"
+                    >
+                      {m.model.split("/").pop()}{" "}
+                      <span className="text-zinc-600">
+                        ({m.sessions} 会话, ${m.estimated_cost.toFixed(2)})
+                      </span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {analytics.skills && analytics.skills.top_skills.length > 0 && (
+              <div className="bg-surface-1 border border-zinc-800 rounded-xl p-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <Sparkles className="w-3 h-3 text-amber-400" />
+                  <p className="text-[10px] text-zinc-500 uppercase tracking-wider">
+                    技能使用 Top {Math.min(analytics.skills.top_skills.length, 5)}
+                  </p>
+                  <span className="text-[10px] text-zinc-600 ml-auto">
+                    共 {analytics.skills.summary.distinct_skills_used} 个技能
+                  </span>
+                </div>
+                <div className="space-y-1.5">
+                  {analytics.skills.top_skills.slice(0, 5).map((s) => (
+                    <div
+                      key={s.skill}
+                      className="flex items-center gap-2 text-xs"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-zinc-300 truncate">
+                            {s.skill}
+                          </span>
+                          <span className="text-zinc-600 shrink-0">
+                            {s.total_count} 次
+                          </span>
+                        </div>
+                        <div className="w-full bg-zinc-800 rounded-full h-1 mt-1">
+                          <div
+                            className="bg-amber-500/60 h-1 rounded-full"
+                            style={{ width: `${Math.min(s.percentage, 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </section>
+        ) : insights && (insights.sessions > 0 || insights.messages > 0) ? (
           <section className="mb-8">
             <h2 className="text-base font-semibold text-zinc-400 uppercase tracking-wider mb-5">
               近 7 天使用统计
@@ -222,11 +361,7 @@ export default function DashboardView() {
               <MiniStat
                 icon={<Cpu className="w-4 h-4 text-purple-400" />}
                 label="Tokens"
-                value={
-                  insights.total_tokens > 100000
-                    ? `${(insights.total_tokens / 1000).toFixed(0)}K`
-                    : String(insights.total_tokens)
-                }
+                value={formatTokens(insights.total_tokens)}
               />
               <MiniStat
                 icon={<DollarSign className="w-4 h-4 text-emerald-400" />}
@@ -253,7 +388,7 @@ export default function DashboardView() {
               </div>
             )}
           </section>
-        )}
+        ) : null}
 
         {/* Agent Cards */}
         <section>
@@ -357,6 +492,16 @@ function AgentCard({
     telegram: "Telegram",
     discord: "Discord",
     slack: "Slack",
+    whatsapp: "WhatsApp",
+    signal: "Signal",
+    email: "Email",
+    mattermost: "Mattermost",
+    yuanbao: "腾讯元宝",
+    teams: "Teams",
+    line: "LINE",
+    matrix: "Matrix",
+    rocket: "Rocket.Chat",
+    wechat: "微信",
   };
 
   const formatUptime = (secs: number) => {
@@ -432,6 +577,13 @@ function MiniStat({
       </div>
     </div>
   );
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 100_000) return `${(n / 1_000).toFixed(0)}K`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
 }
 
 function EmptyAgents({ onCreate }: { onCreate: () => void }) {

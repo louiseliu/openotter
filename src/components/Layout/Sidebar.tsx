@@ -12,6 +12,10 @@ import {
   Moon,
   Cpu,
   KeyRound,
+  ScrollText,
+  Puzzle,
+  UserCog,
+  ShieldCheck,
 } from "lucide-react";
 import { useAppStore, type View } from "../../stores/appStore";
 
@@ -25,7 +29,11 @@ const navItems: { id: View; icon: typeof LayoutDashboard; label: string }[] = [
   { id: "models", icon: Cpu, label: "模型" },
   { id: "credentials", icon: KeyRound, label: "凭证" },
   { id: "cron", icon: Clock, label: "定时" },
+  { id: "plugins", icon: Puzzle, label: "插件" },
+  { id: "profiles", icon: UserCog, label: "档案" },
+  { id: "env", icon: ShieldCheck, label: "环境" },
   { id: "mcp", icon: Plug, label: "MCP" },
+  { id: "logs", icon: ScrollText, label: "日志" },
   { id: "settings", icon: Settings, label: "设置" },
 ];
 
@@ -101,7 +109,7 @@ export default function Sidebar() {
       </button>
 
       <div className="text-[10px] text-zinc-600 text-center leading-tight">
-        v0.1
+        v0.2
       </div>
     </aside>
   );

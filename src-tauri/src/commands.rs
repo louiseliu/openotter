@@ -3,6 +3,7 @@ use crate::config::{HermesConfig, InstallStatus};
 use crate::gateway_manager::{self, GatewayManagerState, GatewayProcess, GatewayStatus};
 use crate::hermes_installer;
 use crate::sidecar::{HermesProcess, SidecarState};
+use crate::web_server::WebServerState;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -1262,6 +1263,150 @@ pub fn stop_hermes_sidecar(state: State<'_, Mutex<SidecarState>>) -> Result<(), 
     }
 
     sidecar.process = None;
+    Ok(())
+}
+
+// ─── Web Server (Hermes Dashboard API) ──────────────────────
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WebServerInfo {
+    pub running: bool,
+    pub port: Option<u16>,
+    pub token: Option<String>,
+}
+
+#[tauri::command]
+pub fn get_web_server_info(
+    state: State<'_, Mutex<WebServerState>>,
+) -> WebServerInfo {
+    let ws = state.lock().unwrap();
+    match &ws.process {
+        Some(p) if p.ready => WebServerInfo {
+            running: true,
+            port: Some(p.port),
+            token: p.token.clone(),
+        },
+        _ => WebServerInfo {
+            running: false,
+            port: None,
+            token: None,
+        },
+    }
+}
+
+#[tauri::command]
+pub async fn start_web_server(
+    state: State<'_, Mutex<WebServerState>>,
+) -> Result<WebServerInfo, String> {
+    {
+        let ws = state.lock().map_err(|e| e.to_string())?;
+        if let Some(ref p) = ws.process {
+            if p.ready {
+                return Ok(WebServerInfo {
+                    running: true,
+                    port: Some(p.port),
+                    token: p.token.clone(),
+                });
+            }
+        }
+    }
+
+    let port: u16 = 9119;
+
+    // Check if web server is already running externally
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .unwrap();
+    let index_url = format!("http://127.0.0.1:{}/", port);
+
+    if let Ok(resp) = client.get(&index_url).send().await {
+        if resp.status().is_success() {
+            if let Ok(html) = resp.text().await {
+                let token = crate::web_server::extract_token_from_html(&html);
+                let mut ws = state.lock().map_err(|e| e.to_string())?;
+                ws.process = Some(crate::web_server::WebServerProcess {
+                    port,
+                    ready: true,
+                    pid: None,
+                    token: token.clone(),
+                });
+                return Ok(WebServerInfo {
+                    running: true,
+                    port: Some(port),
+                    token,
+                });
+            }
+        }
+    }
+
+    let hermes_bin = gateway_manager::hermes_bin_path()
+        .ok_or("Hermes binary not found")?;
+
+    let child = std::process::Command::new(&hermes_bin)
+        .args(["dashboard", "--port", &port.to_string(), "--no-open"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Failed to spawn hermes dashboard: {}", e))?;
+
+    let child_pid = child.id();
+    {
+        let mut ws = state.lock().map_err(|e| e.to_string())?;
+        ws.process = Some(crate::web_server::WebServerProcess {
+            port,
+            ready: false,
+            pid: Some(child_pid),
+            token: None,
+        });
+    }
+
+    // Wait for the web server to start, then extract the token
+    tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
+
+    let mut token: Option<String> = None;
+    for i in 0..30 {
+        let delay = if i < 5 { 500 } else { 1000 };
+        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+
+        if let Ok(resp) = client.get(&index_url).send().await {
+            if resp.status().is_success() {
+                if let Ok(html) = resp.text().await {
+                    token = crate::web_server::extract_token_from_html(&html);
+                    break;
+                }
+            }
+        }
+    }
+
+    if token.is_none() {
+        return Err("Web server started but token not retrievable within 30s".to_string());
+    }
+
+    {
+        let mut ws = state.lock().map_err(|e| e.to_string())?;
+        if let Some(ref mut p) = ws.process {
+            p.ready = true;
+            p.token = token.clone();
+        }
+    }
+
+    Ok(WebServerInfo {
+        running: true,
+        port: Some(port),
+        token,
+    })
+}
+
+#[tauri::command]
+pub fn stop_web_server(state: State<'_, Mutex<WebServerState>>) -> Result<(), String> {
+    let mut ws = state.lock().map_err(|e| e.to_string())?;
+    if let Some(ref proc) = ws.process {
+        if let Some(pid) = proc.pid {
+            let _ = kill_process(pid);
+        }
+    }
+    ws.process = None;
     Ok(())
 }
 

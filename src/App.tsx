@@ -27,6 +27,10 @@ import CronView from "./components/Cron/CronView";
 import McpView from "./components/MCP/McpView";
 import ModelsView from "./components/Models/ModelsView";
 import CredentialsView from "./components/Credentials/CredentialsView";
+import LogsView from "./components/Logs/LogsView";
+import PluginsView from "./components/Plugins/PluginsView";
+import ProfilesView from "./components/Profiles/ProfilesView";
+import EnvView from "./components/Env/EnvView";
 import { Loader2 } from "lucide-react";
 
 export default function App() {
@@ -181,6 +185,10 @@ export default function App() {
         {currentView === "mcp" && <McpView />}
         {currentView === "models" && <ModelsView />}
         {currentView === "credentials" && <CredentialsView />}
+        {currentView === "logs" && <LogsView />}
+        {currentView === "plugins" && <PluginsView />}
+        {currentView === "profiles" && <ProfilesView />}
+        {currentView === "env" && <EnvView />}
       </main>
     </div>
   );
